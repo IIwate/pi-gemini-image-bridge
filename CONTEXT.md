@@ -49,6 +49,7 @@ The dedicated background execution channel powered by Node.js `worker_threads`. 
 CPU-intensive WASM compilation, Lanczos3 resampling, and PNG encoding to a background
 thread so the main TUI event loop never freezes.
 
-**后台静默预热 (Background Warm-up)**:
-The asynchronous initialization step that pre-compiles WebAssembly modules in the background
-Worker thread during plugin startup, eliminating cold-start JIT latency when large images are processed.
+**按需懒启动与空闲回收 (Lazy Spawn & 30s Idle Auto-Reclaim)**:
+The on-demand worker lifecycle pattern (Piscina standard). The worker thread is only spawned
+when a Tier 2/3 task arrives, kept warm for consecutive requests, and automatically terminated
+after 30 seconds of inactivity to reclaim all memory.

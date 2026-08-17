@@ -7,12 +7,12 @@ direction; product decisions (matching scope, size limit, placeholder text) live
 ## System map
 
 ```text
-src/index.ts       Composition root / Pi adapter (triggers background warm-up on start)
+src/index.ts       Composition root / Pi adapter (routes interactive input to pipeline)
 src/core/scan.ts   Pure: extract clipboard-image paths from input text
 src/core/budget.ts Pure: dynamic greedy budget allocation for multi-image prompts
-src/core/load.ts   Pure/I/O: 4-tier adaptive image loader (Fast-Path → Worker WASM → Floor)
+src/core/load.ts   Pure/I/O: 4-tier adaptive image loader (Fast-Path → Lazy Worker WASM → Floor)
 src/core/build.ts  Pure: assemble transform payload (placeholder text + transparent annotations)
-src/wasm/pool.ts   Worker thread manager (singleton worker, pre-warmup, 5s timeout safety)
+src/wasm/pool.ts   Worker thread manager (lazy worker spawn on Tier 2/3, 30s idle auto-reclaim, 5s timeout)
 src/wasm/worker.ts Background worker thread (offloads CPU-bound WASM math from main loop)
 src/wasm/engine.ts In-worker WASM codecs (zero external npm dependencies)
 test/              node:test unit tests over the core contracts

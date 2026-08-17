@@ -71,6 +71,12 @@ function createWorkerInstance(): Worker {
   });
 
   worker.on("exit", () => {
+    // On unexpected exit, immediately fail all pending tasks without waiting for timeout
+    for (const [id, task] of pendingTasks.entries()) {
+      clearTimeout(task.timer);
+      task.resolve({ id, ok: false, reason: "unreadable" });
+    }
+    pendingTasks.clear();
     singletonWorker = null;
     if (idleTimer) {
       clearTimeout(idleTimer);

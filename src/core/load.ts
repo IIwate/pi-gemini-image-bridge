@@ -1,17 +1,17 @@
 /**
- * load.ts — 4-Tier adaptive image loader with in-process WASM fallback.
+ * load.ts — 4-Tier adaptive image loader with background worker offloading.
  *
- * Implements the progressive degradation ladder (decisions.md D5, D9, D10, D11):
+ * Implements the progressive degradation ladder (decisions.md D5, D9, D10, D11, D12):
  * - Tier 1: Fast-Path Passthrough (≤ available budget, 0ms, 100% bit-level lossless)
- * - Tier 2: WASM Lossless Optimization (PNG lossless re-encoding without resolution loss)
- * - Tier 3: Fidelity-Guarded Resampling (Lanczos3 downscaling with 2560px/2048px floors)
+ * - Tier 2: WASM Lossless Optimization (PNG lossless re-encoding via background worker)
+ * - Tier 3: Fidelity-Guarded Resampling (Lanczos3 downscaling via background worker)
  * - Tier 4: Hard Safety Floor (Honest omission placeholder, protecting Gemini's 100MB ceiling)
  */
 
 import { readFile, stat } from "node:fs/promises";
 import { extname } from "node:path";
 import type { BudgetPool } from "./budget.ts";
-import { decodePng, encodePng, resizeLanczos3 } from "../wasm/engine.ts";
+import { processImageInWorker } from "../wasm/pool.ts";
 
 export const MAX_SINGLE_IMAGE_BYTES = 50 * 1024 * 1024; // 50MB raw binary
 export const MAX_HARD_FILE_BYTES = 100 * 1024 * 1024;   // 100MB hard limit before rejection
@@ -46,6 +46,7 @@ export type AdaptiveLoadResult =
 
 /**
  * Loads an image through the 4-tier adaptive pipeline, consuming payload budget greedily.
+ * Heavy WASM computation is offloaded to a background worker thread (D12).
  */
 export async function loadImageAdaptive(
   filePath: string,
@@ -98,66 +99,27 @@ export async function loadImageAdaptive(
   }
 
   // -------------------------------------------------------------------------
-  // Tier 2 & 3: WASM In-Process Processing (Lazy-loaded)
+  // Tier 2 & 3: Offload to Background Worker Thread (0ms main thread blocking)
   // -------------------------------------------------------------------------
-  try {
-    const rawBuffer = await readFile(filePath);
-    const decoded = await decodePng(rawBuffer);
-
-    // Tier 2: Attempt lossless re-encoding without resolution change
-    const losslessOptimized = await encodePng(decoded.data, decoded.width, decoded.height);
-    if (losslessOptimized.length <= budgetPool.remainingBytes) {
-      const alloc = budgetPool.allocate(losslessOptimized.length);
-      if (alloc.granted) {
-        return {
-          ok: true,
-          tier: "lossless",
-          image: {
-            type: "image",
-            mimeType: "image/png",
-            data: Buffer.from(losslessOptimized.buffer, losslessOptimized.byteOffset, losslessOptimized.byteLength).toString("base64"),
-          },
-          annotation: null,
-        };
-      }
+  const workerResult = await processImageInWorker(filePath, budgetPool.remainingBytes);
+  if (workerResult.ok) {
+    const alloc = budgetPool.allocate(workerResult.rawBytesLength);
+    if (alloc.granted) {
+      return {
+        ok: true,
+        tier: workerResult.tier,
+        image: {
+          type: "image",
+          mimeType: workerResult.mimeType,
+          data: workerResult.base64Data,
+        },
+        annotation: workerResult.annotation,
+      };
     }
-
-    // Tier 3: Fidelity-Guarded Resampling (2560px floor -> 2048px floor)
-    const targetScales = [2560, 2048];
-    for (const maxDim of targetScales) {
-      const maxOriginalDim = Math.max(decoded.width, decoded.height);
-      if (maxOriginalDim <= maxDim) continue; // Already smaller than this floor
-
-      const scale = maxDim / maxOriginalDim;
-      const targetWidth = Math.round(decoded.width * scale);
-      const targetHeight = Math.round(decoded.height * scale);
-
-      const resized = await resizeLanczos3(decoded.data, decoded.width, decoded.height, targetWidth, targetHeight);
-      const reencoded = await encodePng(resized.data, resized.width, resized.height);
-
-      if (reencoded.length <= budgetPool.remainingBytes) {
-        const alloc = budgetPool.allocate(reencoded.length);
-        if (alloc.granted) {
-          return {
-            ok: true,
-            tier: "downscaled",
-            image: {
-              type: "image",
-              mimeType: "image/png",
-              data: Buffer.from(reencoded.buffer, reencoded.byteOffset, reencoded.byteLength).toString("base64"),
-            },
-            annotation: `(auto-scaled to ${maxDim}px to fit Gemini 100MB limit)`,
-          };
-        }
-      }
-    }
-  } catch {
-    // If WASM decoding/resizing fails on corrupted data, safely degrade to Tier 4
-    return { ok: false, reason: "unreadable" };
   }
 
   // -------------------------------------------------------------------------
   // Tier 4: Hard Safety Floor
   // -------------------------------------------------------------------------
-  return { ok: false, reason: "too-large" };
+  return { ok: false, reason: workerResult.ok ? "too-large" : workerResult.reason };
 }

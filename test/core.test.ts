@@ -29,6 +29,7 @@ import {
   type ImageContent,
 } from "../src/core/build.ts";
 import { encodePng } from "../src/wasm/engine.ts";
+import { terminateWorkerPool } from "../src/wasm/pool.ts";
 
 const UUID = "11111111-2222-4333-8444-555555555555";
 const WSL_DROP_DIR = "/tmp";
@@ -294,3 +295,8 @@ test("placeholderTextFor maps both failure reasons", () => {
   assert.equal(placeholderTextFor("too-large"), TOO_LARGE_PLACEHOLDER);
   assert.equal(placeholderTextFor("unreadable"), UNREADABLE_PLACEHOLDER);
 });
+
+test("cleanup worker pool for clean test exit", async () => {
+  await terminateWorkerPool();
+});
+

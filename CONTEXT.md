@@ -43,3 +43,12 @@ The 4-stage pipeline for processing clipboard images:
 The total request-level binary budget (~50MB raw, ~66.7MB Base64) derived from the 100MB
 Gemini API limit minus context safety margins. Multiple images in a single prompt consume
 from this pool in appearance order.
+
+**工作线程管线 (Worker Thread Pipeline)**:
+The dedicated background execution channel powered by Node.js `worker_threads`. Offloads
+CPU-intensive WASM compilation, Lanczos3 resampling, and PNG encoding to a background
+thread so the main TUI event loop never freezes.
+
+**后台静默预热 (Background Warm-up)**:
+The asynchronous initialization step that pre-compiles WebAssembly modules in the background
+Worker thread during plugin startup, eliminating cold-start JIT latency when large images are processed.

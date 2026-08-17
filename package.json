@@ -1,6 +1,6 @@
 {
   "name": "pi-gemini-image-paste",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Pi extension: bypass the broken read-tool image path for Gemini-family models by converting pasted clipboard images into user-message attachments.",
   "keywords": [
     "pi-package",

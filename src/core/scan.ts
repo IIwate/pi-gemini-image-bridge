@@ -15,6 +15,16 @@ function escapeRegExp(segment: string): string {
 }
 
 /**
+ * Cross-platform filename extractor that splits on both `/` and `\`.
+ * Guarantees correct extraction even when Windows paths are parsed in POSIX/WSL environments.
+ */
+export function extractFilename(filePath: string): string {
+  if (!filePath) return "";
+  const parts = filePath.split(/[\\/]+/);
+  return parts[parts.length - 1] || filePath;
+}
+
+/**
  * Builds a RegExp matching `dropDir` followed by the clipboard filename pattern.
  * Allows any combination of `/` and `\` between directory segments and matches case-insensitively.
  */

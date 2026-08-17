@@ -12,6 +12,7 @@ import { join } from "node:path";
 import {
   scanClipboardImagePaths,
   scanSelfContainedPlaceholders,
+  extractFilename,
 } from "../src/core/scan.ts";
 import {
   DEFAULT_MAX_REQUEST_BYTES,
@@ -109,6 +110,23 @@ test("scan finds self-contained placeholder tokens and extracts embedded filenam
   assert.equal(results[1].token, `[Image #2: ${fn2} (auto-scaled to 2560px to fit Gemini 100MB limit)]`);
   assert.equal(results[1].filename, fn2);
   assert.deepEqual(scanSelfContainedPlaceholders("plain text without placeholders"), []);
+});
+
+test("extractFilename handles Windows backslashes, POSIX slashes, and mixed paths cleanly", () => {
+  assert.equal(
+    extractFilename("C:\\Users\\tester\\AppData\\Local\\Temp\\pi-clipboard-1.png"),
+    "pi-clipboard-1.png",
+  );
+  assert.equal(
+    extractFilename("/tmp/pi-clipboard-2.png"),
+    "pi-clipboard-2.png",
+  );
+  assert.equal(
+    extractFilename("C:/Users/tester\\Temp/pi-clipboard-3.png"),
+    "pi-clipboard-3.png",
+  );
+  assert.equal(extractFilename("pi-clipboard-4.png"), "pi-clipboard-4.png");
+  assert.equal(extractFilename(""), "");
 });
 
 // ---------------------------------------------------------------------------

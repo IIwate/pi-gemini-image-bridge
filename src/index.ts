@@ -14,7 +14,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
-import { join, basename } from "node:path";
+import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { createBudgetPool } from "./core/budget.ts";
 import {
@@ -27,6 +27,7 @@ import { loadImageAdaptive } from "./core/load.ts";
 import {
   scanClipboardImagePaths,
   scanSelfContainedPlaceholders,
+  extractFilename,
   type SelfContainedPlaceholderMatch,
 } from "./core/scan.ts";
 
@@ -80,7 +81,7 @@ export default function (pi: ExtensionAPI) {
       if (idx !== -1) {
         targets.push({
           token: p,
-          filename: basename(p),
+          filename: extractFilename(p),
           resolvedPath: p,
           index: idx,
         });

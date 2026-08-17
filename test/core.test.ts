@@ -1,5 +1,5 @@
 /**
- * Core pipeline tests: scan → load → build, each contract exercised with zero
+ * Core pipeline tests: scan → budget → load → build, each contract exercised with zero
  * Pi involvement (Unidirectional-Flow litmus test). Run with `node --test`.
  */
 
@@ -10,7 +10,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { scanClipboardImagePaths } from "../src/core/scan.ts";
-import { MAX_IMAGE_BYTES, loadImage } from "../src/core/load.ts";
+import {
+  DEFAULT_MAX_REQUEST_BYTES,
+  createBudgetPool,
+  type BudgetPool,
+} from "../src/core/budget.ts";
+import {
+  MAX_SINGLE_IMAGE_BYTES,
+  loadImageAdaptive,
+  type AdaptiveLoadResult,
+} from "../src/core/load.ts";
 import {
   TOO_LARGE_PLACEHOLDER,
   UNREADABLE_PLACEHOLDER,
@@ -19,6 +28,7 @@ import {
   type ConvertedItem,
   type ImageContent,
 } from "../src/core/build.ts";
+import { encodePng } from "../src/wasm/engine.ts";
 
 const UUID = "11111111-2222-4333-8444-555555555555";
 const WSL_DROP_DIR = "/tmp";
@@ -82,39 +92,112 @@ test("scan accepts all extensions Pi can drop (png/jpg/webp/gif) and uppercase",
 });
 
 // ---------------------------------------------------------------------------
-// load.ts
+// budget.ts (Dynamic Greedy Budget Pool)
 // ---------------------------------------------------------------------------
 
-test("load encodes a file as base64 with the correct mime type", async () => {
+test("budget pool initializes with default 50MB ceiling and allocates greedily", () => {
+  const pool = createBudgetPool();
+  assert.equal(pool.remainingBytes, DEFAULT_MAX_REQUEST_BYTES);
+
+  // Consume 2MB
+  const alloc1 = pool.allocate(2 * 1024 * 1024);
+  assert.equal(alloc1.granted, true);
+  assert.equal(pool.remainingBytes, DEFAULT_MAX_REQUEST_BYTES - 2 * 1024 * 1024);
+
+  // Consume 40MB
+  const alloc2 = pool.allocate(40 * 1024 * 1024);
+  assert.equal(alloc2.granted, true);
+  assert.equal(pool.remainingBytes, 8 * 1024 * 1024);
+
+  // Attempt 10MB when only 8MB left -> rejected
+  const alloc3 = pool.allocate(10 * 1024 * 1024);
+  assert.equal(alloc3.granted, false);
+  assert.equal(pool.remainingBytes, 8 * 1024 * 1024);
+});
+
+// ---------------------------------------------------------------------------
+// load.ts (Tiered Adaptive Loader)
+// ---------------------------------------------------------------------------
+
+test("load adaptive passes through files within budget with 100% fidelity (Tier 1)", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-gem-test-"));
   try {
     const path = join(dir, "shot.png");
-    await writeFile(path, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02]));
-    const result = await loadImage(path);
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02, 0x03, 0x04]);
+    await writeFile(path, bytes);
+
+    const pool = createBudgetPool();
+    const result = await loadImageAdaptive(path, pool);
+
     assert.equal(result.ok, true);
     if (result.ok) {
+      assert.equal(result.tier, "passthrough");
       assert.equal(result.image.mimeType, "image/png");
-      assert.equal(
-        result.image.data,
-        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02]).toString("base64"),
-      );
+      assert.equal(result.image.data, bytes.toString("base64"));
+      assert.equal(result.annotation, null);
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test("load reports unreadable for a missing file", async () => {
-  const result = await loadImage("/tmp/pi-clipboard-does-not-exist.png");
+test("load adaptive performs WASM resampling when budget requires downscaling (Tier 3)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-gem-test-"));
+  try {
+    const path = join(dir, "large-highres.png");
+    // Generate a 3000x1000 textured image (~12MB raw PNG)
+    const width = 3000;
+    const height = 1000;
+    const rawRgba = new Uint8Array(width * height * 4);
+    for (let i = 0; i < rawRgba.length; i += 4) {
+      rawRgba[i] = (i * 7) % 255;
+      rawRgba[i + 1] = (i * 13) % 255;
+      rawRgba[i + 2] = (i * 17) % 255;
+      rawRgba[i + 3] = 255;
+    }
+    const pngBytes = await encodePng(rawRgba, width, height);
+    await writeFile(path, pngBytes);
+
+    // 1. Budget of 20MB -> fits in Tier 1 passthrough directly
+    const largePool = createBudgetPool(20 * 1024 * 1024);
+    const passResult = await loadImageAdaptive(path, largePool);
+    assert.equal(passResult.ok, true);
+    if (passResult.ok) {
+      assert.equal(passResult.tier, "passthrough");
+    }
+
+    // 2. Tight budget of 10MB -> original ~12MB cannot fit, but 2560px scaled (~8.7MB) fits!
+    const tightPool = createBudgetPool(10 * 1024 * 1024);
+    const tightResult = await loadImageAdaptive(path, tightPool);
+    assert.equal(tightResult.ok, true);
+    if (tightResult.ok) {
+      assert.equal(tightResult.tier, "downscaled");
+      assert.equal(
+        tightResult.annotation,
+        "(auto-scaled to 2560px to fit Gemini 100MB limit)",
+      );
+      assert.equal(tightResult.image.mimeType, "image/png");
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("load adaptive reports unreadable for a missing file (Tier 4)", async () => {
+  const pool = createBudgetPool();
+  const result = await loadImageAdaptive("/tmp/pi-clipboard-does-not-exist.png", pool);
   assert.deepEqual(result, { ok: false, reason: "unreadable" });
 });
 
-test("load reports too-large above the byte ceiling", async () => {
+test("load adaptive handles oversized files exceeding total budget", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-gem-test-"));
   try {
-    const path = join(dir, "big.png");
-    await writeFile(path, Buffer.alloc(MAX_IMAGE_BYTES + 1));
-    const result = await loadImage(path);
+    const path = join(dir, "oversized.png");
+    // Write 101MB dummy payload
+    await writeFile(path, Buffer.alloc(101 * 1024 * 1024));
+
+    const pool = createBudgetPool();
+    const result = await loadImageAdaptive(path, pool);
     assert.deepEqual(result, { ok: false, reason: "too-large" });
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -127,7 +210,7 @@ test("load reports too-large above the byte ceiling", async () => {
 
 const IMG: ImageContent = { type: "image", mimeType: "image/png", data: "aGVsbG8=" };
 
-test("build replaces paths with [Image #N] labels and appends images", () => {
+test("build replaces paths with [Image #N] labels and transparent annotations", () => {
   const existing: ImageContent[] = [{ type: "image", mimeType: "image/png", data: "ZXhpc3Rpbmc=" }];
   const converted: ConvertedItem[] = [
     { path: CLIP_PATH, label: "[Image #1]", image: IMG, placeholder: "" },
@@ -138,6 +221,23 @@ test("build replaces paths with [Image #N] labels and appends images", () => {
   assert.equal(result.images.length, 2);
   assert.deepEqual(result.images[0], existing[0]);
   assert.deepEqual(result.images[1], IMG);
+});
+
+test("build supports transparent annotation labels for downscaled images", () => {
+  const converted: ConvertedItem[] = [
+    {
+      path: CLIP_PATH,
+      label: "[Image #1 (auto-scaled to 2560px to fit Gemini 100MB limit)]",
+      image: IMG,
+      placeholder: "",
+    },
+  ];
+  const result = buildTransform(`analyze ${CLIP_PATH}`, [], converted);
+  assert.ok(result);
+  assert.equal(
+    result.text,
+    "analyze [Image #1 (auto-scaled to 2560px to fit Gemini 100MB limit)]",
+  );
 });
 
 test("build replaces failed paths with placeholder text and keeps numbering", () => {

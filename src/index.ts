@@ -1,6 +1,6 @@
 /**
  * index.ts — Composition root: converts pasted clipboard images into user-message
- * attachments for Gemini-family models.
+ * attachments for Gemini-family models via a 4-tier adaptive pipeline.
  *
  * Why: CPA's gemini translator drops images inside functionResponse (read-tool
  * results), but translates user-message `input_image` parts correctly. Turning the
@@ -12,8 +12,9 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
+import { createBudgetPool } from "./core/budget.ts";
 import { buildTransform, placeholderTextFor, type ConvertedItem } from "./core/build.ts";
-import { loadImage } from "./core/load.ts";
+import { loadImageAdaptive } from "./core/load.ts";
 import { scanClipboardImagePaths } from "./core/scan.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -28,11 +29,15 @@ export default function (pi: ExtensionAPI) {
     const paths = scanClipboardImagePaths(event.text, tmpdir());
     if (paths.length === 0) return { action: "continue" };
 
+    // Dynamic greedy budget pool: 50MB raw binary ceiling (decisions.md D5 & D11)
+    const budgetPool = createBudgetPool();
     const converted: ConvertedItem[] = [];
+
     for (let i = 0; i < paths.length; i++) {
-      const label = `[Image #${i + 1}]`;
-      const result = await loadImage(paths[i]);
+      const result = await loadImageAdaptive(paths[i], budgetPool);
       if (result.ok) {
+        const annotationSuffix = result.annotation ? ` ${result.annotation}` : "";
+        const label = `[Image #${i + 1}${annotationSuffix}]`;
         converted.push({
           path: paths[i],
           label,
@@ -42,7 +47,7 @@ export default function (pi: ExtensionAPI) {
       } else {
         converted.push({
           path: paths[i],
-          label,
+          label: "",
           image: null,
           placeholder: placeholderTextFor(result.reason),
         });

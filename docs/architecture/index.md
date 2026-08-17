@@ -9,8 +9,10 @@ direction; product decisions (matching scope, size limit, placeholder text) live
 ```text
 src/index.ts       Composition root / Pi adapter (only file touching the extension API)
 src/core/scan.ts   Pure: extract clipboard-image paths from input text
-src/core/load.ts   Pure: read file -> base64 + mimeType, enforce size limit
-src/core/build.ts  Pure: assemble transform payload (placeholder text + merged images)
+src/core/budget.ts Pure: dynamic greedy budget allocation for multi-image prompts
+src/core/load.ts   Pure/I/O: 4-tier adaptive image loader (Fast-Path → WASM Lossless → Resample → Floor)
+src/core/build.ts  Pure: assemble transform payload (placeholder text + transparent annotations)
+src/wasm/          Self-contained WASM codecs (zero external npm dependencies)
 test/              node:test unit tests over the core contracts
 ```
 
@@ -29,13 +31,16 @@ index.ts  gates: model.id startsWith "gemini" AND source === "interactive"
    ▼
 scan.ts ────────────────► string[]  (clipboard-image paths, in order of appearance)
    │
-   │  per path
+   │  budget.ts calculates dynamic budget pool (50MB base)
    ▼
-load.ts ────────────────► ok: { mimeType, data } | err: "too-large" | "unreadable"
-   │
+load.ts ────────────────► 4-Tier Adaptive Loader:
+   │                         Tier 1: Fast-Path Passthrough (≤ budget, 0ms, 100% lossless)
+   │                         Tier 2: WASM Lossless Optimization (WebP/PNG without resolution loss)
+   │                         Tier 3: Fidelity-Guarded Resampling (Lanczos3 down to 2560px/2048px)
+   │                         Tier 4: Hard Safety Floor (Honest omission placeholder)
    ▼
 build.ts ───────────────► TransformResult { text, images }
-   │                        text: paths replaced by [Image #N] / placeholder text
+   │                        text: paths replaced by [Image #N] / transparent annotations / placeholders
    │                        images: [...event.images, ...converted]
    ▼
 index.ts returns { action: "transform", ... }

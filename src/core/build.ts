@@ -17,7 +17,7 @@ export interface ImageContent {
 
 export interface ConvertedItem {
   path: string;
-  /** `[Image #N]` label replacing the path when the conversion succeeded. */
+  /** `[Image #N]` or `[Image #N (auto-scaled...)]` label replacing the path when the conversion succeeded. */
   label: string;
   /** Converted image, or null when the conversion failed. */
   image: ImageContent | null;
@@ -30,7 +30,7 @@ export interface TransformResult {
   images: ImageContent[];
 }
 
-export const TOO_LARGE_PLACEHOLDER = "[image omitted: exceeds 50MB limit]";
+export const TOO_LARGE_PLACEHOLDER = "[image omitted: exceeds Gemini 100MB limit even after compression]";
 export const UNREADABLE_PLACEHOLDER = "[image omitted: could not be read]";
 
 /** Returns the placeholder text for a load failure reason. */
@@ -53,8 +53,6 @@ export function buildTransform(
   const images = [...existingImages];
   for (const item of converted) {
     const replacement = item.image ? item.label : item.placeholder;
-    // Literal replacement via split/join: paths contain only [0-9a-f-/.],
-    // so no regex escaping is needed.
     out = out.split(item.path).join(replacement);
     if (item.image) images.push(item.image);
   }

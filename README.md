@@ -1,59 +1,66 @@
 # pi-gemini-image-paste
 
-A Pi extension that enables Gemini-family models to actually see pasted clipboard images in interactive mode, bypassing the broken `read`-tool image path in CPA (cli-proxy-api).
+A lightweight [Pi](https://github.com/badlogic/pi-mono) extension that enables Gemini-family models to receive pasted clipboard images as user-message attachments, bypassing the broken `read`-tool image path in CPA (CLIProxyAPI).
 
-## Background & Root Cause
+## Why
 
-- **`read`-tool images are dropped upstream**: In CPA's Gemini translator (`buildOpenAIResponsesFunctionResponsePart`), `function_call_output` is forwarded raw inside `functionResponse.response.result` without conversion into Gemini's `inlineData` format. Gemini/antigravity upstream receives raw OpenAI `input_image` JSON objects and ignores them as plain text.
-- **Upstream constraint**: The Google Gemini API officially does not support images inside `FunctionResponse` parts. The `read`-tool path cannot be fixed upstream without changing CPA.
-- **User-message channel works**: CPA correctly translates `input_image` blocks in `message` turns into `inline_data`, allowing Gemini to see images sent as user-message attachments.
-- **Pi's interactive paste mechanism**: `handleClipboardPaste` writes clipboard images to `<os.tmpdir()>/pi-clipboard-<uuid>.<ext>` and inserts the file path as plain text into the editor. When submitted, text is sent via `session.prompt(text)` without `@` reference expansion. As a result, Gemini-family models cannot see any pasted images in interactive mode (paste -> path text -> `read` tool -> dropped).
+1. **`read`-tool images fail upstream**: Google Gemini API does not support images inside `FunctionResponse` (tool outputs). When Gemini calls `read` on an image, the image is ignored upstream and the model hallucinates.
+2. **User messages work**: CPA correctly translates `input_image` blocks in user messages into Gemini's `inline_data` format.
+3. **Pi paste limitation**: In interactive mode (TUI), pasting an image saves it to `<os.tmpdir()>/pi-clipboard-<uuid>.<ext>` and inserts the raw path text. Submitted prompts are sent as plain text without resolving `@` references, forcing the model into the broken `read` tool.
 
-**This extension**: Intercepts interactive user input and converts clipboard drop paths into user-message image attachments, sending them through the working channel so Gemini models truly receive and understand images.
+**This plugin** intercepts interactive input, loads clipboard drop files into base64 attachments on the user message, and replaces the path in text with `[Image #N]`.
 
 ## Installation
 
-Install directly via Pi's package manager:
-
+### Via Pi CLI (Recommended)
 ```bash
 pi install npm:pi-gemini-image-paste
 ```
 
-Or add to the `packages` array in `settings.json` (`~/.pi/agent/settings.json` on Linux/WSL or `%USERPROFILE%\.pi\agent\settings.json` on Windows):
+### Via `settings.json`
+Add to the `packages` array in `settings.json` (`~/.pi/agent/settings.json` on Linux/macOS/WSL, `%USERPROFILE%\.pi\agent\settings.json` on Windows):
 
 ```json
-"packages": [
-  "npm:pi-gemini-image-paste"
-]
+{
+  "packages": [
+    "npm:pi-gemini-image-paste"
+  ]
+}
 ```
 
-Restart Pi after installation.
+### From Local Source (Development)
+```json
+{
+  "packages": [
+    {
+      "source": "/path/to/pi-gemini-image-paste",
+      "extensions": ["+src/index.ts"]
+    }
+  ]
+}
+```
+
+Restart Pi after configuring.
 
 ## Usage
 
-In interactive mode (TUI) when using a Gemini-family model (model ID starting with `gemini`, e.g. `gemini-3.7-flash-high`):
+In interactive mode with any Gemini-family model (model ID starting with `gemini`, e.g., `gemini-3.7-flash-high`):
 
-- **Paste image**: Press `Ctrl+V` (WSL/Linux) or `Alt+V` (Windows). Pi drops the image to disk and inserts its path. Send the message.
-- **Or type path directly**: Input a clipboard drop path (e.g. `<os.tmpdir()>/pi-clipboard-<uuid>.png`) and prompt the model.
+- **Paste image**: Press `Ctrl+V` (Linux/macOS/WSL) or `Alt+V` (Windows). Pi drops the image and pastes the path. Send the message.
+- **Or type path**: Enter `<os.tmpdir()>/pi-clipboard-<uuid>.png` directly in your prompt.
 
-The extension replaces the path text with an `[Image #N]` placeholder and attaches the actual image to the user message. Non-Gemini models (Claude, Codex, GPT series) and non-interactive channels (`pi -p`, RPC) pass through untouched.
+The path is replaced with `[Image #1]`, and the image is attached directly to the user message. Non-Gemini models and non-interactive runs (`pi -p`, RPC) pass through untouched.
 
-## Verification
+## Key Boundaries
 
-1. In interactive mode with a Gemini-family model, paste a screenshot or input a clipboard drop path and ask the model to describe it. The model will accurately read the visual content, and the message text will display `[Image #1]`.
-2. **Control group**: Using the `read` tool on the same image file will still fail/hallucinate (confirming the upstream tool-call defect).
-3. **Development checks**: Run `node --test` (15 unit tests, zero dependencies) and `tsc --noEmit`.
-
-## Known Limitations
-
-- **Gemini-family models only**: Gated by `model.id.startsWith("gemini")`; other models remain unchanged.
-- **Clipboard drop files only**: Matches `<os.tmpdir()>/pi-clipboard-<uuid>.{png,jpg,webp,gif}` across both `/` and `\` separators. Arbitrary user-typed image paths are not hijacked.
-- **50MB byte ceiling**: Images exceeding 50MB are replaced with an explanatory placeholder (`[image omitted: exceeds 50MB limit]`), staying within Gemini API's 100MB request-body limit after base64 expansion.
-- **Placeholder visibility**: `[Image #N]` placeholder text is sent to the model along with the attachment; Gemini handles text-plus-attachment correspondence naturally.
+- **Targeted**: Only activates when `ctx.model.id` starts with `gemini` and `event.source === "interactive"`.
+- **Drop files only**: Matches `<os.tmpdir()>/pi-clipboard-<uuid>.{png,jpg,webp,gif}` across both `/` and `\` separators.
+- **50MB ceiling**: Files exceeding 50MB become `[image omitted: exceeds 50MB limit]`, within Gemini API's 100MB request limit.
+- **Zero runtime dependencies**: Pure TypeScript pipeline, tested with `node --test`.
 
 ## Architecture
 
-See [docs/architecture/index.md](docs/architecture/index.md) (S.U.P.E.R. modular monolith: composition root + pure core pipeline) and [docs/architecture/decisions.md](docs/architecture/decisions.md) (architecture decisions D1–D8).
+See [docs/architecture/index.md](docs/architecture/index.md) (S.U.P.E.R. modular monolith) and [docs/architecture/decisions.md](docs/architecture/decisions.md) (architecture decisions D1–D8).
 
 ## License
 

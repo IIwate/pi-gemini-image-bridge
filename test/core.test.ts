@@ -116,7 +116,7 @@ test("budget pool initializes with default 50MB ceiling and allocates greedily",
 });
 
 // ---------------------------------------------------------------------------
-// load.ts (Tiered Adaptive Loader)
+// load.ts (Tiered Adaptive Loader: Tiers 1-4)
 // ---------------------------------------------------------------------------
 
 test("load adaptive passes through files within budget with 100% fidelity (Tier 1)", async () => {
@@ -135,6 +135,35 @@ test("load adaptive passes through files within budget with 100% fidelity (Tier 
       assert.equal(result.image.mimeType, "image/png");
       assert.equal(result.image.data, bytes.toString("base64"));
       assert.equal(result.annotation, null);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("load adaptive performs WASM lossless re-encoding when budget requires optimization (Tier 2)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-gem-test-"));
+  try {
+    const path = join(dir, "unoptimized-padded.png");
+    // Create a 100x100 clean PNG (~1.2KB) padded with 300KB dummy trailing bytes
+    const width = 100;
+    const height = 100;
+    const rawRgba = new Uint8Array(width * height * 4);
+    rawRgba.fill(64);
+    const cleanPng = await encodePng(rawRgba, width, height);
+    const paddedPng = Buffer.concat([cleanPng, Buffer.alloc(300 * 1024)]);
+    await writeFile(path, paddedPng);
+
+    // Budget of 50KB: raw 301KB exceeds budget, but Tier 2 lossless optimization reduces it to ~1.2KB
+    const pool = createBudgetPool(50 * 1024);
+    const result = await loadImageAdaptive(path, pool);
+
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.tier, "lossless");
+      assert.equal(result.annotation, null);
+      assert.equal(result.image.mimeType, "image/png");
+      assert.ok(result.image.data.length > 0);
     }
   } finally {
     await rm(dir, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 /**
  * index.ts — Composition root: converts pasted clipboard images into user-message
- * attachments for Gemini-family models via a 4-tier adaptive pipeline with background worker.
+ * attachments for Gemini-family models via a 4-tier adaptive pipeline with lazy worker.
  *
  * Why: CPA's gemini translator drops images inside functionResponse (read-tool
  * results), but translates user-message `input_image` parts correctly. Turning the
@@ -16,12 +16,8 @@ import { createBudgetPool } from "./core/budget.ts";
 import { buildTransform, placeholderTextFor, type ConvertedItem } from "./core/build.ts";
 import { loadImageAdaptive } from "./core/load.ts";
 import { scanClipboardImagePaths } from "./core/scan.ts";
-import { warmupWorker } from "./wasm/pool.ts";
 
 export default function (pi: ExtensionAPI) {
-  // Silent background pre-warmup on startup (decisions.md D12)
-  warmupWorker();
-
   pi.on("input", async (event, ctx) => {
     // Gates fail open (decisions.md D1/D2): non-gemini models and non-interactive
     // sources pass through untouched.

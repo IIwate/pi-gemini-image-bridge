@@ -1,8 +1,11 @@
 /**
- * pool.ts — Main-thread worker manager for background WASM execution.
+ * pool.ts — Main-thread worker manager with Lazy Spawn & 30s Idle Timeout.
  *
- * Manages a pre-warmed singleton worker_thread (decisions.md D12) with
- * a 5000ms hard timeout, auto-recovery on thread error, and zero main-thread freezing.
+ * Implements the Node.js/Piscina industry-standard lifecycle (decisions.md D12):
+ * - Zero startup overhead: Worker is only spawned on-demand when a Tier 2/3 task arrives.
+ * - Warm reuse: Worker stays warm for rapid consecutive image processing.
+ * - Auto-reclaim: Automatically terminates after 30 seconds of inactivity to free memory.
+ * - Fault tolerance: 5000ms hard timeout per task with automatic recovery.
  */
 
 import { Worker } from "node:worker_threads";
@@ -14,18 +17,32 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const WORKER_TIMEOUT_MS = 5000;
+const IDLE_TIMEOUT_MS = 30_000; // Auto-terminate after 30s of inactivity
 
 let singletonWorker: Worker | null = null;
+let idleTimer: NodeJS.Timeout | null = null;
 let taskIdSeq = 0;
 const pendingTasks = new Map<number, {
   resolve: (res: WorkerTaskResponse) => void;
   timer: NodeJS.Timeout;
 }>();
 
+function resetIdleTimer(): void {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  if (pendingTasks.size === 0 && singletonWorker) {
+    idleTimer = setTimeout(() => {
+      terminateWorkerPool();
+    }, IDLE_TIMEOUT_MS);
+    idleTimer.unref();
+  }
+}
+
 function createWorkerInstance(): Worker {
   const workerScriptPath = join(__dirname, "worker.ts");
   const worker = new Worker(workerScriptPath);
-  // Unref worker thread handle so idle workers never hang the Node.js event loop
   worker.unref();
 
   worker.on("message", (msg: { type: string; response?: WorkerTaskResponse }) => {
@@ -36,6 +53,7 @@ function createWorkerInstance(): Worker {
         pendingTasks.delete(msg.response.id);
         if (pendingTasks.size === 0 && singletonWorker) {
           singletonWorker.unref();
+          resetIdleTimer();
         }
         pending.resolve(msg.response);
       }
@@ -43,23 +61,31 @@ function createWorkerInstance(): Worker {
   });
 
   worker.on("error", () => {
-    // On crash, reject all pending tasks and reset singleton
     for (const [id, task] of pendingTasks.entries()) {
       clearTimeout(task.timer);
       task.resolve({ id, ok: false, reason: "unreadable" });
     }
     pendingTasks.clear();
     singletonWorker = null;
+    resetIdleTimer();
   });
 
   worker.on("exit", () => {
     singletonWorker = null;
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
   });
 
   return worker;
 }
 
 function getOrSpawnWorker(): Worker {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
   if (!singletonWorker) {
     singletonWorker = createWorkerInstance();
   }
@@ -67,20 +93,8 @@ function getOrSpawnWorker(): Worker {
 }
 
 /**
- * Triggers background pre-compilation and warm-up of WebAssembly modules.
- * Completely non-blocking and safe to call during extension initialization.
- */
-export function warmupWorker(): void {
-  try {
-    const worker = getOrSpawnWorker();
-    worker.postMessage({ type: "warmup" });
-  } catch {
-    // Warmup failure is non-fatal
-  }
-}
-
-/**
  * Dispatches an adaptive image processing task to the background worker thread.
+ * Spawns the worker on demand if not already running.
  */
 export function processImageInWorker(
   filePath: string,
@@ -96,8 +110,8 @@ export function processImageInWorker(
         pendingTasks.delete(id);
         if (pendingTasks.size === 0 && singletonWorker) {
           singletonWorker.unref();
+          resetIdleTimer();
         }
-        // On hard timeout, terminate and recreate worker to unfreeze state
         try {
           worker.terminate();
         } catch {
@@ -117,9 +131,13 @@ export function processImageInWorker(
 }
 
 /**
- * Explicitly terminates the singleton worker thread (useful for clean test teardowns).
+ * Explicitly terminates the singleton worker thread to immediately reclaim memory.
  */
 export async function terminateWorkerPool(): Promise<void> {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
   if (singletonWorker) {
     const worker = singletonWorker;
     singletonWorker = null;

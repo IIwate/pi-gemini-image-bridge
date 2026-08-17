@@ -102,11 +102,12 @@ this file; CONTEXT.md is vocabulary-only.
 
 **Why**: users frequently paste a small screenshot (e.g. 2MB popup) alongside a large screenshot (e.g. 40MB IDE window). Static division ($50\text{MB}/N$) would unnecessarily starve large images, while greedy pooling maximizes success rates.
 
-## D12 — Background Worker Thread & Silent Warm-up
+## D12 — Background Worker Thread with Lazy Spawn & 30s Idle Auto-Reclaim
 
-**Settled**: execute CPU-bound WebAssembly operations (PNG decoding, Lanczos3 resampling, and PNG encoding) in a dedicated long-lived Node.js `worker_thread` (`src/wasm/worker.ts`), pre-warmed silently on extension activation (`src/wasm/pool.ts`). The main thread communicates lightweight file-path payloads and applies a 5000ms hard timeout with auto-recreation on thread crash.
+**Settled**: execute CPU-bound WebAssembly operations (PNG decoding, Lanczos3 resampling, and PNG encoding) in a dedicated Node.js `worker_thread` (`src/wasm/worker.ts`), managed via an on-demand lifecycle pool (`src/wasm/pool.ts`). The worker is spawned lazily only when a Tier 2/3 task arrives, kept warm for consecutive requests, and automatically terminated after 30 seconds of inactivity to reclaim memory. The main thread communicates lightweight file-path payloads and applies a 5000ms hard timeout with auto-recreation on thread crash.
 
-**Why**: WASM Lanczos3 resampling and DEFLATE encoding on high-res screenshots (3000px+) consume ~600-800ms of intensive CPU math. Running this on the main Node.js event loop freezes the terminal TUI, pauses cursor blinking, and delays keystroke handling. Offloading to a pre-warmed background worker guarantees 0ms main-thread freeze, keeping the interface completely responsive.
+**Why**: WASM Lanczos3 resampling and DEFLATE encoding on high-res screenshots (3000px+) consume ~600-800ms of intensive CPU math. Running this on the main Node.js event loop freezes the terminal TUI, pauses cursor blinking, and delays keystroke handling. Spawning the worker lazily with a 30s idle timeout guarantees 0ms main-thread freeze, 0 startup overhead on extension activation, and 0 idle memory footprint during normal CLI use.
+
 
 
 

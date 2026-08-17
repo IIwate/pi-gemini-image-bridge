@@ -57,3 +57,16 @@ The on-demand worker lifecycle pattern (Piscina standard). The worker thread is 
 when a Tier 2/3 task arrives, kept warm for consecutive requests, and automatically terminated
 after 30 seconds of inactivity to reclaim all memory.
 _Avoid_: eager worker, permanent daemon (when describing thread lifecycle management)
+
+**Session Attachment Cache**:
+An in-memory LRU cache that associates emitted placeholder labels (e.g. `[Image #1]`) with
+their on-disk clipboard image file paths during the active session. Holds lightweight path
+strings only, never keeping large image buffers in memory.
+_Avoid_: disk cache, persistent store (when referring to the in-memory label-to-path registry)
+
+**Placeholder Rehydration**:
+The reverse-resolution process where existing `[Image #N]` labels present in rewound,
+aborted, or history-recalled draft text are restored to valid image attachments by resolving
+against the session attachment cache and re-validating the underlying files.
+_Avoid_: undo restore, text recovery (when describing placeholder-to-attachment rehydration)
+

@@ -1,125 +1,114 @@
 /**
- * load.ts — 4-Tier adaptive image loader with background worker offloading.
+ * load.ts — 4-Tier Adaptive Image Loader.
  *
- * Implements the progressive degradation ladder (decisions.md D5, D9, D10, D11, D12):
- * - Tier 1: Fast-Path Passthrough (≤ available budget, 0ms, 100% bit-level lossless)
- * - Tier 2: WASM Lossless Optimization (PNG lossless re-encoding via background worker)
- * - Tier 3: Fidelity-Guarded Resampling (Lanczos3 downscaling via background worker)
- * - Tier 4: Hard Safety Floor (Honest omission placeholder, protecting Gemini's 100MB ceiling)
+ * Implements S.U.P.E.R. Architecture & D9:
+ * - Tier 1: Fast-Path Passthrough (0ms, 100% bit-exact lossless) for images within budget (<=50MB)
+ * - Tier 2: WASM Lossless Optimization (in-process worker DEFLATE re-encoding without resolution loss)
+ * - Tier 3: Fidelity-Guarded Resampling (Lanczos3 downscaling with hard floors at 2560px/2048px)
+ * - Tier 4: Hard Safety Floor (honest placeholder omission on corruption or >100MB overflow)
+ *
+ * Pure & Ports over Implementation:
+ * - Does not depend on Pi runtime.
+ * - Delegates CPU-intensive WASM tasks to the background worker pool.
  */
 
-import { readFile, stat } from "node:fs/promises";
+import { stat, readFile } from "node:fs/promises";
 import { extname } from "node:path";
 import type { BudgetPool } from "./budget.ts";
+import type { FailureReason } from "./build.ts";
 import { processImageInWorker } from "../wasm/pool.ts";
 
-export const MAX_SINGLE_IMAGE_BYTES = 50 * 1024 * 1024; // 50MB raw binary
-export const MAX_HARD_FILE_BYTES = 100 * 1024 * 1024;   // 100MB hard limit before rejection
-
-const MIME_BY_EXT: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp",
-  ".gif": "image/gif",
-};
-
-export interface LoadedImage {
-  type: "image";
-  mimeType: string;
-  data: string; // base64 (no data: prefix)
-}
-
-export type AdaptiveTier = "passthrough" | "lossless" | "downscaled";
+export const MAX_HARD_FILE_BYTES = 100 * 1024 * 1024; // 100MB physical safety ceiling
 
 export type AdaptiveLoadResult =
   | {
       ok: true;
-      tier: AdaptiveTier;
-      image: LoadedImage;
+      image: { mimeType: string; data: string };
       annotation: string | null;
+      tier: "passthrough" | "lossless" | "downscaled";
     }
   | {
       ok: false;
-      reason: "too-large" | "unreadable";
+      reason: FailureReason;
     };
 
+export function mimeTypeForExtension(ext: string): string {
+  const normalized = ext.toLowerCase().replace(/^\./, "");
+  switch (normalized) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "webp":
+      return "image/webp";
+    case "gif":
+      return "image/gif";
+    default:
+      return "image/png";
+  }
+}
+
 /**
- * Loads an image through the 4-tier adaptive pipeline, consuming payload budget greedily.
- * Heavy WASM computation is offloaded to a background worker thread (D12).
+ * Loads an image through the 4-tier adaptive fidelity pipeline.
  */
 export async function loadImageAdaptive(
   filePath: string,
   budgetPool: BudgetPool,
 ): Promise<AdaptiveLoadResult> {
-  let stats;
+  let fileSizeBytes = 0;
   try {
-    stats = await stat(filePath);
+    const fileStat = await stat(filePath);
+    fileSizeBytes = fileStat.size;
   } catch {
     return { ok: false, reason: "unreadable" };
   }
 
-  // Hard sanity ceiling check (reject files beyond 100MB instantly)
-  if (stats.size > MAX_HARD_FILE_BYTES) {
+  // Tier 4: Reject files physically exceeding 100MB immediately
+  if (fileSizeBytes > MAX_HARD_FILE_BYTES) {
     return { ok: false, reason: "too-large" };
   }
 
-  const ext = extname(filePath).toLowerCase();
-  const mimeType = MIME_BY_EXT[ext] ?? "image/png";
+  const mimeType = mimeTypeForExtension(extname(filePath));
 
-  // -------------------------------------------------------------------------
-  // Tier 1: Fast-Path Passthrough (0ms overhead, 100% bit-level lossless)
-  // -------------------------------------------------------------------------
-  if (stats.size <= budgetPool.remainingBytes && stats.size <= MAX_SINGLE_IMAGE_BYTES) {
-    let buf: Buffer;
+  // Tier 1: Fast-Path Passthrough (100% bit-exact lossless)
+  // If file fits comfortably within remaining budget, bypass WASM entirely.
+  const alloc = budgetPool.allocate(fileSizeBytes);
+  if (alloc.granted) {
     try {
-      buf = await readFile(filePath);
+      const buffer = await readFile(filePath);
+      return {
+        ok: true,
+        image: { mimeType, data: buffer.toString("base64") },
+        annotation: null,
+        tier: "passthrough",
+      };
     } catch {
       return { ok: false, reason: "unreadable" };
     }
-
-    const alloc = budgetPool.allocate(stats.size);
-    if (alloc.granted) {
-      return {
-        ok: true,
-        tier: "passthrough",
-        image: {
-          type: "image",
-          mimeType,
-          data: buf.toString("base64"),
-        },
-        annotation: null,
-      };
-    }
   }
 
-  // If not a PNG or remaining budget is exhausted, cannot run WASM optimization
-  if (ext !== ".png" || budgetPool.remainingBytes <= 0) {
+  // If even 1MB cannot be allocated, fail with budget overflow
+  if (budgetPool.remainingBytes <= 0) {
     return { ok: false, reason: "too-large" };
   }
 
-  // -------------------------------------------------------------------------
-  // Tier 2 & 3: Offload to Background Worker Thread (0ms main thread blocking)
-  // -------------------------------------------------------------------------
-  const workerResult = await processImageInWorker(filePath, budgetPool.remainingBytes);
+  // Tier 2 & 3: Offload to background worker thread (WASM Optimization / Lanczos3 Resampling)
+  const remainingBudget = budgetPool.remainingBytes;
+  const workerResult = await processImageInWorker(filePath, remainingBudget);
+
   if (workerResult.ok) {
-    const alloc = budgetPool.allocate(workerResult.rawBytesLength);
-    if (alloc.granted) {
+    const workerAlloc = budgetPool.allocate(workerResult.rawBytesLength);
+    if (workerAlloc.granted) {
       return {
         ok: true,
+        image: { mimeType: workerResult.mimeType, data: workerResult.base64Data },
+        annotation: workerResult.annotation ?? null,
         tier: workerResult.tier,
-        image: {
-          type: "image",
-          mimeType: workerResult.mimeType,
-          data: workerResult.base64Data,
-        },
-        annotation: workerResult.annotation,
       };
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Tier 4: Hard Safety Floor
-  // -------------------------------------------------------------------------
+  // Tier 4: Final Safety Floor
   return { ok: false, reason: workerResult.ok ? "too-large" : workerResult.reason };
 }

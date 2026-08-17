@@ -108,6 +108,13 @@ this file; CONTEXT.md is vocabulary-only.
 
 **Why**: WASM Lanczos3 resampling and DEFLATE encoding on high-res screenshots (3000px+) consume ~600-800ms of intensive CPU math. Running this on the main Node.js event loop freezes the terminal TUI, pauses cursor blinking, and delays keystroke handling. Spawning the worker lazily with a 30s idle timeout guarantees 0ms main-thread freeze, 0 startup overhead on extension activation, and 0 idle memory footprint during normal CLI use.
 
+## D13 — Session Attachment Cache & Placeholder Rehydration
+
+**Settled**: maintain a lightweight in-memory LRU cache of recently emitted placeholder labels to on-disk file paths (`Map<string, string>`, capacity: 50 items). When user text contains existing `[Image #N]` labels (from `/tree`, `/fork`, abort, or rewind) without matching raw clipboard paths, the extension rehydrates attachments by resolving labels against the cache and feeding them through the 4-tier pipeline. If a cached file is deleted from disk, the placeholder is safely downgraded to `[image omitted: cached image no longer available on disk]`.
+
+**Why**: Pi's rewind and history mechanisms only restore submitted literal strings (e.g. `[Image #1]`) and do not preserve attachment metadata. Rehydrating placeholders on-demand provides a seamless Codex-like rewind and edit experience with zero memory overhead (paths only, no resident image buffers) and strict fault tolerance against missing files.
+
+
 
 
 

@@ -1,19 +1,13 @@
 /**
- * scan.ts — Matches Pi clipboard-image drop paths in input text.
+ * scan.ts — Pure functions for scanning clipboard image paths and placeholder tokens.
  *
- * Pi's interactive paste handler (handleClipboardPaste) writes clipboard images to
- * `<os.tmpdir()>/pi-clipboard-<uuid>.<ext>` and inserts the bare path into the editor.
- * The drop directory is platform-dependent (decisions.md D3): `/tmp` on WSL/Linux,
- * `C:\Users\...\AppData\Local\Temp` on Windows.
- *
- * To ensure bulletproof Windows/POSIX matching:
- * 1. Path separators (`/` and `\`) are normalized to match either separator across segments.
- * 2. Case is ignored (`gi`), accommodating Windows drive-letter / path case variations.
- * 3. Spaces in directory names (e.g. `C:\Users\John Doe\...`) are preserved.
+ * Implements S.U.P.E.R. Architecture:
+ * - Single Purpose: path scanning and token extraction only. No I/O, no Pi dependencies.
+ * - Cross-Platform: handles mixed slashes, lowercase/uppercase drives, spaces in usernames.
  */
 
 const CLIPBOARD_FILE_RE_SOURCE =
-  "pi-clipboard-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(?:png|jpg|webp|gif)";
+  "pi-clipboard-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(?:png|jpg|jpeg|webp|gif)";
 
 /** Escapes a directory path segment for literal use inside a RegExp. */
 function escapeRegExp(segment: string): string {
@@ -47,6 +41,7 @@ function buildClipboardPathRegex(dropDir: string): RegExp {
  * Empty array when nothing matches.
  */
 export function scanClipboardImagePaths(text: string, dropDir: string): string[] {
+  if (!text || !dropDir) return [];
   const re = buildClipboardPathRegex(dropDir);
 
   const paths: string[] = [];
@@ -59,4 +54,26 @@ export function scanClipboardImagePaths(text: string, dropDir: string): string[]
     }
   }
   return paths;
+}
+
+/**
+ * Scans input text for existing image placeholder tokens, such as:
+ *   "[Image #1]" or "[Image #1 (auto-scaled to 2560px to fit Gemini 100MB limit)]"
+ */
+export function scanPlaceholderTokens(text: string): string[] {
+  if (!text) return [];
+
+  const regex = /\[Image #\d+(?:\s+[^\]]*)?\]/gi;
+  const results: string[] = [];
+  const seen = new Set<string>();
+
+  for (const match of text.matchAll(regex)) {
+    const token = match[0];
+    if (!seen.has(token)) {
+      seen.add(token);
+      results.push(token);
+    }
+  }
+
+  return results;
 }

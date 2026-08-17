@@ -1,5 +1,5 @@
 /**
- * Core pipeline tests: scan → budget → load → build, each contract exercised with zero
+ * Core pipeline tests: scan → budget → cache → load → build, each contract exercised with zero
  * Pi involvement (Unidirectional-Flow litmus test). Run with `node --test`.
  */
 
@@ -9,24 +9,22 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { scanClipboardImagePaths } from "../src/core/scan.ts";
+import { scanClipboardImagePaths, scanPlaceholderTokens } from "../src/core/scan.ts";
+import { createAttachmentCache, normalizeLabel } from "../src/core/cache.ts";
 import {
   DEFAULT_MAX_REQUEST_BYTES,
   createBudgetPool,
   type BudgetPool,
 } from "../src/core/budget.ts";
 import {
-  MAX_SINGLE_IMAGE_BYTES,
+  MAX_HARD_FILE_BYTES,
   loadImageAdaptive,
   type AdaptiveLoadResult,
 } from "../src/core/load.ts";
 import {
-  TOO_LARGE_PLACEHOLDER,
-  UNREADABLE_PLACEHOLDER,
   buildTransform,
   placeholderTextFor,
   type ConvertedItem,
-  type ImageContent,
 } from "../src/core/build.ts";
 import { encodePng } from "../src/wasm/engine.ts";
 import { terminateWorkerPool } from "../src/wasm/pool.ts";
@@ -90,6 +88,51 @@ test("scan accepts all extensions Pi can drop (png/jpg/webp/gif) and uppercase",
     scanClipboardImagePaths(`${jpg} ${webp} ${gif} ${pngUpper}`, WSL_DROP_DIR),
     [jpg, webp, gif, pngUpper],
   );
+});
+
+test("scan finds existing placeholder tokens with and without annotations", () => {
+  const text = "check [Image #1] and [Image #2 (auto-scaled to 2560px)] and [Image #10]";
+  assert.deepEqual(scanPlaceholderTokens(text), [
+    "[Image #1]",
+    "[Image #2 (auto-scaled to 2560px)]",
+    "[Image #10]",
+  ]);
+  assert.deepEqual(scanPlaceholderTokens("no placeholders"), []);
+});
+
+// ---------------------------------------------------------------------------
+// cache.ts (Session Attachment Cache)
+// ---------------------------------------------------------------------------
+
+test("cache stores and normalizes placeholder labels to file paths", () => {
+  const cache = createAttachmentCache(3);
+  cache.set("[Image #1]", "/tmp/shot1.png");
+  cache.set("[Image #2 (auto-scaled to 2560px)]", "/tmp/shot2.png");
+
+  assert.equal(cache.get("[Image #1]"), "/tmp/shot1.png");
+  assert.equal(cache.get("[Image #2]"), "/tmp/shot2.png");
+  assert.equal(cache.get("[Image #2 (different annotation)]"), "/tmp/shot2.png");
+  assert.equal(cache.get("[Image #3]"), undefined);
+});
+
+test("cache respects LRU bounded capacity", () => {
+  const cache = createAttachmentCache(2);
+  cache.set("[Image #1]", "/tmp/shot1.png");
+  cache.set("[Image #2]", "/tmp/shot2.png");
+  assert.equal(cache.size(), 2);
+
+  // Adding 3rd item evicts oldest ([Image #1])
+  cache.set("[Image #3]", "/tmp/shot3.png");
+  assert.equal(cache.size(), 2);
+  assert.equal(cache.has("[Image #1]"), false);
+  assert.equal(cache.has("[Image #2]"), true);
+  assert.equal(cache.has("[Image #3]"), true);
+});
+
+test("normalizeLabel strips transparent annotations cleanly", () => {
+  assert.equal(normalizeLabel("[Image #1]"), "[Image #1]");
+  assert.equal(normalizeLabel("[Image #3 (auto-scaled to 2560px)]"), "[Image #3]");
+  assert.equal(normalizeLabel("plain text"), "plain text");
 });
 
 // ---------------------------------------------------------------------------
@@ -238,12 +281,12 @@ test("load adaptive handles oversized files exceeding total budget", async () =>
 // build.ts
 // ---------------------------------------------------------------------------
 
-const IMG: ImageContent = { type: "image", mimeType: "image/png", data: "aGVsbG8=" };
+const IMG = { type: "image" as const, mimeType: "image/png", data: "aGVsbG8=" };
 
-test("build replaces paths with [Image #N] labels and transparent annotations", () => {
-  const existing: ImageContent[] = [{ type: "image", mimeType: "image/png", data: "ZXhpc3Rpbmc=" }];
+test("build replaces targets with [Image #N] labels and transparent annotations", () => {
+  const existing = [{ type: "image" as const, mimeType: "image/png", data: "ZXhpc3Rpbmc=" }];
   const converted: ConvertedItem[] = [
-    { path: CLIP_PATH, label: "[Image #1]", image: IMG, placeholder: "" },
+    { target: CLIP_PATH, label: "[Image #1]", image: IMG, placeholder: "" },
   ];
   const result = buildTransform(`describe ${CLIP_PATH}`, existing, converted);
   assert.ok(result);
@@ -256,7 +299,7 @@ test("build replaces paths with [Image #N] labels and transparent annotations", 
 test("build supports transparent annotation labels for downscaled images", () => {
   const converted: ConvertedItem[] = [
     {
-      path: CLIP_PATH,
+      target: CLIP_PATH,
       label: "[Image #1 (auto-scaled to 2560px to fit Gemini 100MB limit)]",
       image: IMG,
       placeholder: "",
@@ -270,20 +313,29 @@ test("build supports transparent annotation labels for downscaled images", () =>
   );
 });
 
-test("build replaces failed paths with placeholder text and keeps numbering", () => {
+test("build replaces failed paths and placeholders with honest notices", () => {
   const other = `/tmp/pi-clipboard-${"f".repeat(8)}-${"a".repeat(4)}-${"b".repeat(4)}-${"c".repeat(4)}-${"d".repeat(12)}.png`;
   const converted: ConvertedItem[] = [
-    { path: CLIP_PATH, label: "[Image #1]", image: IMG, placeholder: "" },
+    { target: CLIP_PATH, label: "[Image #1]", image: IMG, placeholder: "" },
     {
-      path: other,
+      target: other,
       label: "[Image #2]",
       image: null,
       placeholder: placeholderTextFor("unreadable"),
     },
+    {
+      target: "[Image #3]",
+      label: "",
+      image: null,
+      placeholder: placeholderTextFor("missing-cache"),
+    },
   ];
-  const result = buildTransform(`${CLIP_PATH} and ${other}`, [], converted);
+  const result = buildTransform(`${CLIP_PATH} and ${other} and [Image #3]`, [], converted);
   assert.ok(result);
-  assert.equal(result.text, "[Image #1] and [image omitted: could not be read]");
+  assert.equal(
+    result.text,
+    "[Image #1] and [image omitted: unreadable or unsupported file] and [image omitted: cached image no longer available on disk]",
+  );
   assert.equal(result.images.length, 1);
 });
 
@@ -291,12 +343,110 @@ test("build returns null when there is nothing to convert", () => {
   assert.equal(buildTransform("plain text", [], []), null);
 });
 
-test("placeholderTextFor maps both failure reasons", () => {
-  assert.equal(placeholderTextFor("too-large"), TOO_LARGE_PLACEHOLDER);
-  assert.equal(placeholderTextFor("unreadable"), UNREADABLE_PLACEHOLDER);
+test("placeholderTextFor maps failure reasons honestly", () => {
+  assert.equal(
+    placeholderTextFor("too-large"),
+    "[image omitted: exceeds Gemini 100MB limit even after compression]",
+  );
+  assert.equal(
+    placeholderTextFor("unreadable"),
+    "[image omitted: unreadable or unsupported file]",
+  );
+  assert.equal(
+    placeholderTextFor("missing-cache"),
+    "[image omitted: cached image no longer available on disk]",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Integration Simulation: Rewind & Placeholder Rehydration Cycle
+// ---------------------------------------------------------------------------
+
+test("end-to-end cycle: paste -> transform -> rewind rehydration -> file deletion fallback", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-gem-test-"));
+  try {
+    const cache = createAttachmentCache(10);
+    const pool = createBudgetPool();
+
+    // 1. Initial paste: User pastes an image
+    const filePath = join(dir, `pi-clipboard-${UUID}.png`);
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02, 0x03, 0x04]);
+    await writeFile(filePath, pngBytes);
+
+    // Initial input text
+    const initialText = `please analyze ${filePath}`;
+    const scannedPaths = scanClipboardImagePaths(initialText, dir);
+    assert.deepEqual(scannedPaths, [filePath]);
+
+    // Convert
+    const loadResult1 = await loadImageAdaptive(filePath, pool);
+    assert.equal(loadResult1.ok, true);
+    if (loadResult1.ok) {
+      cache.set("[Image #1]", filePath);
+    }
+    const converted1: ConvertedItem[] = [
+      {
+        target: filePath,
+        label: "[Image #1]",
+        image: loadResult1.ok ? { type: "image", mimeType: loadResult1.image.mimeType, data: loadResult1.image.data } : null,
+        placeholder: "",
+      },
+    ];
+    const tx1 = buildTransform(initialText, [], converted1);
+    assert.ok(tx1);
+    assert.equal(tx1.text, "please analyze [Image #1]");
+    assert.equal(tx1.images.length, 1);
+
+    // 2. Rewind / Abort Cycle: User aborted or rewound, editor contains literal "[Image #1]"
+    const rewoundText = "please analyze [Image #1] again";
+    const foundPlaceholders = scanPlaceholderTokens(rewoundText);
+    assert.deepEqual(foundPlaceholders, ["[Image #1]"]);
+
+    // Rehydrate from cache
+    const rehydratedPath = cache.get("[Image #1]");
+    assert.equal(rehydratedPath, filePath);
+
+    const loadResult2 = await loadImageAdaptive(rehydratedPath!, createBudgetPool());
+    assert.equal(loadResult2.ok, true);
+    const converted2: ConvertedItem[] = [
+      {
+        target: "[Image #1]",
+        label: "[Image #1]",
+        image: loadResult2.ok ? { type: "image", mimeType: loadResult2.image.mimeType, data: loadResult2.image.data } : null,
+        placeholder: "",
+      },
+    ];
+    const tx2 = buildTransform(rewoundText, [], converted2);
+    assert.ok(tx2);
+    assert.equal(tx2.text, "please analyze [Image #1] again");
+    assert.equal(tx2.images.length, 1);
+    assert.equal(tx2.images[0].data, pngBytes.toString("base64"));
+
+    // 3. File deleted on disk: cache points to missing file
+    await rm(filePath);
+    const missingLoadResult = await loadImageAdaptive(rehydratedPath!, createBudgetPool());
+    assert.equal(missingLoadResult.ok, false);
+
+    const converted3: ConvertedItem[] = [
+      {
+        target: "[Image #1]",
+        label: "",
+        image: null,
+        placeholder: placeholderTextFor("missing-cache"),
+      },
+    ];
+    const tx3 = buildTransform(rewoundText, [], converted3);
+    assert.ok(tx3);
+    assert.equal(
+      tx3.text,
+      "please analyze [image omitted: cached image no longer available on disk] again",
+    );
+    assert.equal(tx3.images.length, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("cleanup worker pool for clean test exit", async () => {
   await terminateWorkerPool();
 });
-

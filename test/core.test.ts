@@ -40,6 +40,26 @@ test("scan matches Windows drop paths with backslash separators", () => {
   assert.deepEqual(scanClipboardImagePaths(`look at ${winPath}`, WIN_DROP_DIR), [winPath]);
 });
 
+test("scan matches Windows drop paths case-insensitively (lowercase drive/path)", () => {
+  const winLower = `c:\\users\\tester\\appdata\\local\\temp\\pi-clipboard-${UUID}.png`;
+  assert.deepEqual(scanClipboardImagePaths(`look at ${winLower}`, WIN_DROP_DIR), [winLower]);
+});
+
+test("scan matches Windows drop paths when separators are mixed (/ vs \\)", () => {
+  const winForward = `C:/Users/tester/AppData/Local/Temp/pi-clipboard-${UUID}.png`;
+  assert.deepEqual(scanClipboardImagePaths(`look at ${winForward}`, WIN_DROP_DIR), [winForward]);
+
+  const dropDirForward = "C:/Users/tester/AppData/Local/Temp";
+  const winBackslash = `C:\\Users\\tester\\AppData\\Local\\Temp\\pi-clipboard-${UUID}.png`;
+  assert.deepEqual(scanClipboardImagePaths(`look at ${winBackslash}`, dropDirForward), [winBackslash]);
+});
+
+test("scan matches Windows paths with spaces in directory name", () => {
+  const spaceDir = "C:\\Users\\John Doe\\AppData\\Local\\Temp";
+  const winSpacePath = `${spaceDir}\\pi-clipboard-${UUID}.png`;
+  assert.deepEqual(scanClipboardImagePaths(`see ${winSpacePath}`, spaceDir), [winSpacePath]);
+});
+
 test("scan ignores non-clipboard paths and URLs", () => {
   const text = `random /tmp/foo.png and /home/user/pi-clipboard-x.png and https://x/y.png`;
   assert.deepEqual(scanClipboardImagePaths(text, WSL_DROP_DIR), []);
@@ -50,13 +70,14 @@ test("scan returns empty for text without matches", () => {
   assert.deepEqual(scanClipboardImagePaths("", WSL_DROP_DIR), []);
 });
 
-test("scan accepts all extensions Pi can drop (png/jpg/webp/gif)", () => {
+test("scan accepts all extensions Pi can drop (png/jpg/webp/gif) and uppercase", () => {
   const jpg = `/tmp/pi-clipboard-${UUID}.jpg`;
   const webp = `/tmp/pi-clipboard-${UUID}.webp`;
   const gif = `/tmp/pi-clipboard-${UUID}.gif`;
+  const pngUpper = `/tmp/pi-clipboard-${UUID}.PNG`;
   assert.deepEqual(
-    scanClipboardImagePaths(`${jpg} ${webp} ${gif}`, WSL_DROP_DIR),
-    [jpg, webp, gif],
+    scanClipboardImagePaths(`${jpg} ${webp} ${gif} ${pngUpper}`, WSL_DROP_DIR),
+    [jpg, webp, gif, pngUpper],
   );
 });
 

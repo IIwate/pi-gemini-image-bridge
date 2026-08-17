@@ -4,15 +4,40 @@
  * Pi's interactive paste handler (handleClipboardPaste) writes clipboard images to
  * `<os.tmpdir()>/pi-clipboard-<uuid>.<ext>` and inserts the bare path into the editor.
  * The drop directory is platform-dependent (decisions.md D3): `/tmp` on WSL/Linux,
- * `C:\Users\...\AppData\Local\Temp` on Windows. Only those files are converted; any
- * other path stays untouched so the plugin never hijacks unrelated image references.
+ * `C:\Users\...\AppData\Local\Temp` on Windows.
+ *
+ * To ensure bulletproof Windows/POSIX matching:
+ * 1. Path separators (`/` and `\`) are normalized to match either separator across segments.
+ * 2. Case is ignored (`gi`), accommodating Windows drive-letter / path case variations.
+ * 3. Spaces in directory names (e.g. `C:\Users\John Doe\...`) are preserved.
  */
 
-const CLIPBOARD_FILE_RE = /pi-clipboard-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:png|jpg|webp|gif)/;
+const CLIPBOARD_FILE_RE_SOURCE =
+  "pi-clipboard-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(?:png|jpg|webp|gif)";
 
-/** Escapes a directory path for literal use inside a RegExp. */
-function escapeRegExp(dir: string): string {
-  return dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Escapes a directory path segment for literal use inside a RegExp. */
+function escapeRegExp(segment: string): string {
+  return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Builds a RegExp matching `dropDir` followed by the clipboard filename pattern.
+ * Allows any combination of `/` and `\` between directory segments and matches case-insensitively.
+ */
+function buildClipboardPathRegex(dropDir: string): RegExp {
+  const isUnc = dropDir.startsWith("\\\\") || dropDir.startsWith("//");
+  const isRoot = !isUnc && (dropDir.startsWith("/") || dropDir.startsWith("\\"));
+  const segments = dropDir.split(/[\\/]+/).filter(Boolean);
+  const escapedSegments = segments.map(escapeRegExp);
+
+  let prefixPattern = escapedSegments.join("[\\\\/]+");
+  if (isUnc) {
+    prefixPattern = `[\\\\/]{2}${prefixPattern}`;
+  } else if (isRoot) {
+    prefixPattern = `[\\\\/]+${prefixPattern}`;
+  }
+
+  return new RegExp(`${prefixPattern}[\\\\/]+${CLIPBOARD_FILE_RE_SOURCE}`, "gi");
 }
 
 /**
@@ -22,8 +47,7 @@ function escapeRegExp(dir: string): string {
  * Empty array when nothing matches.
  */
 export function scanClipboardImagePaths(text: string, dropDir: string): string[] {
-  const trimmedDir = dropDir.replace(/[\\/]+$/, "");
-  const re = new RegExp(`${escapeRegExp(trimmedDir)}[\\\\/]${CLIPBOARD_FILE_RE.source}`, "g");
+  const re = buildClipboardPathRegex(dropDir);
 
   const paths: string[] = [];
   const seen = new Set<string>();

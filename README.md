@@ -1,27 +1,21 @@
 # pi-gemini-image-paste
 
-Pi 扩展：让 gemini 系模型在交互模式真正看到粘贴的图片，绕过 CPA 代理的 read 工具丢图缺陷。
+English | [简体中文](README.zh-CN.md)
 
-## 背景与根因
+A Pi extension that enables Gemini-family models to actually see pasted clipboard images in interactive mode, bypassing the broken `read`-tool image path in CPA (cli-proxy-api).
 
-- **read 工具结果图片必丢**：CPA（cli-proxy-api）的 gemini 翻译器
-  （`buildOpenAIResponsesFunctionResponsePart`）把 `function_call_output` 的 output 原样塞入
-  `functionResponse.response.result`，不转 Gemini 的 `inlineData` 格式；Gemini/antigravity
-  上游收到的是原始 OpenAI `input_image` 格式，当文本忽略。
-- **上游无解**：Google Gemini API 官方不支持 functionResponse 内携带图片，read 工具链路在
-  gemini 系无法修复（不修改 CPA）。
-- **用户消息通道正常**：CPA 对 user 消息的 `input_image` 正确转 `inline_data`，图片作为
-  附件随消息发送时模型能看到。
-- **Pi 交互粘贴现状**：`handleClipboardPaste` 把剪贴板图片落盘到
-  `/tmp/pi-clipboard-<uuid>.png` 并插入纯路径文本；提交时纯文本发送，不解析 `@`。
-  → 交互模式下 gemini 系模型原本无法看任何图片（粘贴→路径→read→丢；read→丢）。
+## Background & Root Cause
 
-**本插件**：拦截交互输入，把文本中的剪贴板落盘图片路径转换为 user 消息图片附件，图片
-走正常通道，模型真正看到图。
+- **`read`-tool images are dropped upstream**: In CPA's Gemini translator (`buildOpenAIResponsesFunctionResponsePart`), `function_call_output` is forwarded raw inside `functionResponse.response.result` without conversion into Gemini's `inlineData` format. Gemini/antigravity upstream receives raw OpenAI `input_image` JSON objects and ignores them as plain text.
+- **Upstream constraint**: The Google Gemini API officially does not support images inside `FunctionResponse` parts. The `read`-tool path cannot be fixed upstream without changing CPA.
+- **User-message channel works**: CPA correctly translates `input_image` blocks in `message` turns into `inline_data`, allowing Gemini to see images sent as user-message attachments.
+- **Pi's interactive paste mechanism**: `handleClipboardPaste` writes clipboard images to `<os.tmpdir()>/pi-clipboard-<uuid>.<ext>` and inserts the file path as plain text into the editor. When submitted, text is sent via `session.prompt(text)` without `@` reference expansion. As a result, Gemini-family models cannot see any pasted images in interactive mode (paste -> path text -> `read` tool -> dropped).
 
-## 安装
+**This extension**: Intercepts interactive user input and converts clipboard drop paths into user-message image attachments, sending them through the working channel so Gemini models truly receive and understand images.
 
-1. 在 Pi 配置目录的 `settings.json`（WSL：`~/.pi/agent/settings.json`）的 `packages` 数组追加（已安装时可跳过）：
+## Installation
+
+1. Add the package to the `packages` array in your Pi `settings.json` (`~/.pi/agent/settings.json` on Linux/WSL or `%USERPROFILE%\.pi\agent\settings.json` on Windows):
 
    ```json
    {
@@ -30,34 +24,36 @@ Pi 扩展：让 gemini 系模型在交互模式真正看到粘贴的图片，绕
    }
    ```
 
-2. 重启 pi 生效。
+   *(Or use `"npm:pi-gemini-image-paste"` once installed from npm)*
 
-## 用法
+2. Restart Pi for changes to take effect.
 
-交互模式（TUI）下，模型为 gemini 系（`ctx.model.id` 以 `gemini` 开头）时：
+## Usage
 
-- 粘贴图片（WSL/Linux：`Ctrl+V`；Windows：`Alt+V`；Pi 落盘 `/tmp/pi-clipboard-<uuid>.png` 并插入路径），发送消息；
-- 或直接输入剪贴板落盘图片路径（如 `/tmp/pi-clipboard-<uuid>.png`）并描述问题。
+In interactive mode (TUI) when using a Gemini-family model (model ID starting with `gemini`, e.g. `gemini-3.7-flash-high`):
 
-插件会把路径替换为 `[Image #N]` 占位符，图片以附件形式随消息发送。其他模型（如
-claude/codex/gpt 系）与 rpc/`pi -p` 通道行为不变。
+- **Paste image**: Press `Ctrl+V` (WSL/Linux) or `Alt+V` (Windows). Pi drops the image to disk and inserts its path. Send the message.
+- **Or type path directly**: Input a clipboard drop path (e.g. `<os.tmpdir()>/pi-clipboard-<uuid>.png`) and prompt the model.
 
-## 验证
+The extension replaces the path text with an `[Image #N]` placeholder and attaches the actual image to the user message. Non-Gemini models (Claude, Codex, GPT series) and non-interactive channels (`pi -p`, RPC) pass through untouched.
 
-1. gemini 系模型（如 `gemini-3.7-flash-high`）交互模式粘贴一张截图（或输入剪贴板落盘的 `/tmp/pi-clipboard-<uuid>.png` 路径）并描述问题，模型应读出图片真实内容，消息中路径显示为 `[Image #1]`。
-2. 对照组：`read` 工具读同一图片仍失败（read 链路缺陷，插件未触及）。
-3. 开发验证：`node --test`（11 个单测，零依赖）、`tsc --noEmit`（可选）。
+## Verification
 
-## 已知限制
+1. In interactive mode with a Gemini-family model, paste a screenshot or input a clipboard drop path and ask the model to describe it. The model will accurately read the visual content, and the message text will display `[Image #1]`.
+2. **Control group**: Using the `read` tool on the same image file will still fail/hallucinate (confirming the upstream tool-call defect).
+3. **Development checks**: Run `node --test` (15 unit tests, zero dependencies) and `tsc --noEmit`.
 
-- 仅 gemini 系模型生效（按 `model.id.startsWith("gemini")` 门控，不校验 provider）。
-- 仅匹配剪贴板落盘文件 `<os.tmpdir()>/pi-clipboard-<uuid>.{png,jpg,webp,gif}`（自动适配 WSL `/tmp` 与 Windows 临时目录，`/` 与 `\` 分隔符均可）；手动输入其他图片路径不转换。
-- 超过 50MB 的图片无法直通（无缩放能力，受不装依赖约束），替换为占位说明文本。
-- `[Image #N]` 占位文本会随消息发给模型（Pi 无 Codex 的标签剥离机制）；gemini 对
-  「文本 + 图片附件」对应关系理解良好，可接受。
+## Known Limitations
 
-## 架构
+- **Gemini-family models only**: Gated by `model.id.startsWith("gemini")`; other models remain unchanged.
+- **Clipboard drop files only**: Matches `<os.tmpdir()>/pi-clipboard-<uuid>.{png,jpg,webp,gif}` across both `/` and `\` separators. Arbitrary user-typed image paths are not hijacked.
+- **50MB byte ceiling**: Images exceeding 50MB are replaced with an explanatory placeholder (`[image omitted: exceeds 50MB limit]`), staying within Gemini API's 100MB request-body limit after base64 expansion.
+- **Placeholder visibility**: `[Image #N]` placeholder text is sent to the model along with the attachment; Gemini handles text-plus-attachment correspondence naturally.
 
-见 [docs/architecture/index.md](docs/architecture/index.md)（S.U.P.E.R 分层：组合根 +
-三个纯函数 core 模块）与 [docs/architecture/decisions.md](docs/architecture/decisions.md)
-（决策记录 D1–D8）。
+## Architecture
+
+See [docs/architecture/index.md](docs/architecture/index.md) (S.U.P.E.R. modular monolith: composition root + pure core pipeline) and [docs/architecture/decisions.md](docs/architecture/decisions.md) (architecture decisions D1–D8).
+
+## License
+
+[MIT](LICENSE)

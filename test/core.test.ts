@@ -344,6 +344,27 @@ test("build replaces failed paths and placeholders with honest notices", () => {
   assert.equal(result.images.length, 1);
 });
 
+test("build prevents double substitution and prefix collisions with single-pass replacement", () => {
+  // Scenario 1: Prefix collision: [Image #10] must not be corrupted by [Image #1]
+  const convPrefix: ConvertedItem[] = [
+    { target: "[Image #1]", label: "[Image #1-NEW]", image: IMG, placeholder: "" },
+    { target: "[Image #10]", label: "[Image #10-NEW]", image: IMG, placeholder: "" },
+  ];
+  const txPrefix = buildTransform("compare [Image #10] with [Image #1]", [], convPrefix);
+  assert.ok(txPrefix);
+  assert.equal(txPrefix.text, "compare [Image #10-NEW] with [Image #1-NEW]");
+
+  // Scenario 2: Double substitution: converting raw path to [Image #2] while existing [Image #2] is renumbered to [Image #1]
+  const convDouble: ConvertedItem[] = [
+    { target: CLIP_PATH, label: "[Image #2]", image: IMG, placeholder: "" },
+    { target: "[Image #2]", label: "[Image #1]", image: IMG, placeholder: "" },
+  ];
+  const txDouble = buildTransform(`see ${CLIP_PATH} and [Image #2]`, [], convDouble);
+  assert.ok(txDouble);
+  // CLIP_PATH must become [Image #2], existing [Image #2] must become [Image #1], without double replacement
+  assert.equal(txDouble.text, "see [Image #2] and [Image #1]");
+});
+
 test("build returns null when there is nothing to convert", () => {
   assert.equal(buildTransform("plain text", [], []), null);
 });

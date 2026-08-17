@@ -50,27 +50,52 @@ export function placeholderTextFor(reason: FailureReason): string {
   }
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Replaces every image target (path or placeholder) with its label or omission notice,
- * appending converted images after existing ones. Returns null when there is nothing to convert.
+ * appending converted images after existing ones.
+ *
+ * Uses single-pass RegExp replacement with length-descending sorting to completely eliminate:
+ * 1. Double substitution (e.g. replacing a path with "[Image #2]" which is later re-replaced by target "[Image #2]")
+ * 2. Prefix collision (e.g. "[Image #1]" accidentally corrupting "[Image #10]")
+ *
+ * Returns null when there is nothing to convert.
  */
 export function buildTransform(
-  text: string,
+  originalText: string,
   existingImages: ImageContent[],
   converted: ConvertedItem[],
 ): TransformResult | null {
   if (converted.length === 0) return null;
 
-  let out = text;
-  const images = [...existingImages];
+  const replacementMap = new Map<string, string>();
+  const newImages: ImageContent[] = [];
 
   for (const item of converted) {
     const replacement = item.image ? item.label : item.placeholder;
-    out = out.replaceAll(item.target, replacement);
+    replacementMap.set(item.target, replacement);
     if (item.image) {
-      images.push(item.image);
+      newImages.push(item.image);
     }
   }
 
-  return { text: out, images };
+  // Sort keys by length descending to ensure longer tokens match first (e.g. "[Image #10]" before "[Image #1]")
+  const sortedKeys = Array.from(replacementMap.keys()).sort((a, b) => b.length - a.length);
+  if (sortedKeys.length === 0) return null;
+
+  const unionPattern = sortedKeys.map(escapeRegExp).join("|");
+  const regex = new RegExp(unionPattern, "g");
+
+  // Single-pass replacement guarantees no token is ever scanned or replaced twice
+  const text = originalText.replace(regex, (matched) => {
+    return replacementMap.get(matched) ?? matched;
+  });
+
+  return {
+    text,
+    images: [...existingImages, ...newImages],
+  };
 }

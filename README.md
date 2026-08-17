@@ -1,7 +1,5 @@
 # pi-gemini-image-paste
 
-English | [简体中文](README.zh-CN.md)
-
 A Pi extension that enables Gemini-family models to actually see pasted clipboard images in interactive mode, bypassing the broken `read`-tool image path in CPA (cli-proxy-api).
 
 ## Background & Root Cause
@@ -15,18 +13,21 @@ A Pi extension that enables Gemini-family models to actually see pasted clipboar
 
 ## Installation
 
-1. Add the package to the `packages` array in your Pi `settings.json` (`~/.pi/agent/settings.json` on Linux/WSL or `%USERPROFILE%\.pi\agent\settings.json` on Windows):
+Install directly via Pi's package manager:
 
-   ```json
-   {
-     "source": "/path/to/pi-gemini-image-paste",
-     "extensions": ["+src/index.ts"]
-   }
-   ```
+```bash
+pi install npm:pi-gemini-image-paste
+```
 
-   *(Or use `"npm:pi-gemini-image-paste"` once installed from npm)*
+Or add to the `packages` array in `settings.json` (`~/.pi/agent/settings.json` on Linux/WSL or `%USERPROFILE%\.pi\agent\settings.json` on Windows):
 
-2. Restart Pi for changes to take effect.
+```json
+"packages": [
+  "npm:pi-gemini-image-paste"
+]
+```
+
+Restart Pi after installation.
 
 ## Usage
 

@@ -442,6 +442,12 @@ test("end-to-end cycle: paste -> transform -> rewind rehydration -> file deletio
       "please analyze [image omitted: cached image no longer available on disk] again",
     );
     assert.equal(tx3.images.length, 0);
+
+    // 4. Manually typed placeholder without cache entry is not rehydrated (left untouched)
+    const untrackedText = "see [Image #99] in document";
+    const foundUntracked = scanPlaceholderTokens(untrackedText);
+    assert.deepEqual(foundUntracked, ["[Image #99]"]);
+    assert.equal(cache.has("[Image #99]"), false);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

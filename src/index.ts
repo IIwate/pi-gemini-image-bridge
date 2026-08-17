@@ -58,8 +58,16 @@ export default function (pi: ExtensionAPI) {
     }
 
     for (const ph of existingPlaceholders) {
-      const idx = event.text.indexOf(ph);
-      if (idx !== -1) targets.push({ token: ph, index: idx, isPlaceholder: true });
+      // Only treat as target if the placeholder was previously emitted by this session.
+      // Manually typed literal text (e.g. "[Image #1] in doc") without cache entry is ignored.
+      if (attachmentCache.has(ph)) {
+        const idx = event.text.indexOf(ph);
+        if (idx !== -1) targets.push({ token: ph, index: idx, isPlaceholder: true });
+      }
+    }
+
+    if (targets.length === 0) {
+      return { action: "continue" };
     }
 
     targets.sort((a, b) => a.index - b.index);
@@ -79,7 +87,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       if (!resolvedPath || !existsSync(resolvedPath)) {
-        // Cache miss or physical file deleted on disk (decisions.md D13)
+        // Physical file deleted from disk after being cached (decisions.md D13)
         converted.push({
           target: target.token,
           label: "",

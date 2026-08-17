@@ -36,8 +36,8 @@ Pi 扩展：让 gemini 系模型在交互模式真正看到粘贴的图片，绕
 
 交互模式（TUI）下，模型为 gemini 系（`ctx.model.id` 以 `gemini` 开头）时：
 
-- `Ctrl+V` 粘贴图片（Pi 落盘 `/tmp/pi-clipboard-<uuid>.png` 并插入路径），发送消息；
-- 或直接输入 `/tmp/pi-clipboard-<uuid>.png` 路径并描述问题。
+- 粘贴图片（WSL/Linux：`Ctrl+V`；Windows：`Alt+V`；Pi 落盘 `/tmp/pi-clipboard-<uuid>.png` 并插入路径），发送消息；
+- 或直接输入剪贴板落盘图片路径（如 `/tmp/pi-clipboard-<uuid>.png`）并描述问题。
 
 插件会把路径替换为 `[Image #N]` 占位符，图片以附件形式随消息发送。其他模型（如
 claude/codex/gpt 系）与 rpc/`pi -p` 通道行为不变。

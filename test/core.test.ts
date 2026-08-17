@@ -17,14 +17,19 @@ import {
   type BudgetPool,
 } from "../src/core/budget.ts";
 import {
+  MAX_SINGLE_IMAGE_BYTES,
   MAX_HARD_FILE_BYTES,
   loadImageAdaptive,
   type AdaptiveLoadResult,
 } from "../src/core/load.ts";
 import {
+  TOO_LARGE_PLACEHOLDER,
+  UNREADABLE_PLACEHOLDER,
+  MISSING_CACHE_PLACEHOLDER,
   buildTransform,
   placeholderTextFor,
   type ConvertedItem,
+  type ImageContent,
 } from "../src/core/build.ts";
 import { encodePng } from "../src/wasm/engine.ts";
 import { terminateWorkerPool } from "../src/wasm/pool.ts";
@@ -281,10 +286,10 @@ test("load adaptive handles oversized files exceeding total budget", async () =>
 // build.ts
 // ---------------------------------------------------------------------------
 
-const IMG = { type: "image" as const, mimeType: "image/png", data: "aGVsbG8=" };
+const IMG: ImageContent = { type: "image", mimeType: "image/png", data: "aGVsbG8=" };
 
 test("build replaces targets with [Image #N] labels and transparent annotations", () => {
-  const existing = [{ type: "image" as const, mimeType: "image/png", data: "ZXhpc3Rpbmc=" }];
+  const existing: ImageContent[] = [{ type: "image", mimeType: "image/png", data: "ZXhpc3Rpbmc=" }];
   const converted: ConvertedItem[] = [
     { target: CLIP_PATH, label: "[Image #1]", image: IMG, placeholder: "" },
   ];
@@ -334,7 +339,7 @@ test("build replaces failed paths and placeholders with honest notices", () => {
   assert.ok(result);
   assert.equal(
     result.text,
-    "[Image #1] and [image omitted: unreadable or unsupported file] and [image omitted: cached image no longer available on disk]",
+    `[Image #1] and ${UNREADABLE_PLACEHOLDER} and ${MISSING_CACHE_PLACEHOLDER}`,
   );
   assert.equal(result.images.length, 1);
 });
@@ -344,18 +349,9 @@ test("build returns null when there is nothing to convert", () => {
 });
 
 test("placeholderTextFor maps failure reasons honestly", () => {
-  assert.equal(
-    placeholderTextFor("too-large"),
-    "[image omitted: exceeds Gemini 100MB limit even after compression]",
-  );
-  assert.equal(
-    placeholderTextFor("unreadable"),
-    "[image omitted: unreadable or unsupported file]",
-  );
-  assert.equal(
-    placeholderTextFor("missing-cache"),
-    "[image omitted: cached image no longer available on disk]",
-  );
+  assert.equal(placeholderTextFor("too-large"), TOO_LARGE_PLACEHOLDER);
+  assert.equal(placeholderTextFor("unreadable"), UNREADABLE_PLACEHOLDER);
+  assert.equal(placeholderTextFor("missing-cache"), MISSING_CACHE_PLACEHOLDER);
 });
 
 // ---------------------------------------------------------------------------
@@ -439,7 +435,7 @@ test("end-to-end cycle: paste -> transform -> rewind rehydration -> file deletio
     assert.ok(tx3);
     assert.equal(
       tx3.text,
-      "please analyze [image omitted: cached image no longer available on disk] again",
+      `please analyze ${MISSING_CACHE_PLACEHOLDER} again`,
     );
     assert.equal(tx3.images.length, 0);
 

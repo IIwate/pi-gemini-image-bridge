@@ -108,11 +108,14 @@ this file; CONTEXT.md is vocabulary-only.
 
 **Why**: WASM Lanczos3 resampling and DEFLATE encoding on high-res screenshots (3000px+) consume ~600-800ms of intensive CPU math. Running this on the main Node.js event loop freezes the terminal TUI, pauses cursor blinking, and delays keystroke handling. Spawning the worker lazily with a 30s idle timeout guarantees 0ms main-thread freeze, 0 startup overhead on extension activation, and 0 idle memory footprint during normal CLI use.
 
-## D13 — Session Attachment Cache & Placeholder Rehydration
+## D13 — Stateless Self-Contained Placeholder Tokens & Model-Aware Dual-Track Routing
 
-**Settled**: maintain a lightweight in-memory LRU cache of recently emitted placeholder labels to on-disk file paths (`Map<string, string>`, capacity: 50 items). When user text contains existing `[Image #N]` labels (from `/tree`, `/fork`, abort, or rewind) without matching raw clipboard paths, the extension rehydrates attachments by resolving labels against the cache and feeding them through the 4-tier pipeline. If a cached file is deleted from disk, the placeholder is safely downgraded to `[image omitted: cached image no longer available on disk]`.
+**Settled**: embed the clipboard image filename directly into emitted placeholder tokens (`[Image #N: pi-clipboard-<uuid>.<ext>]`). When rewound, resumed, or history-recalled input text contains these tokens:
+1. **Gemini Track**: statelessly extracts the embedded filename, reconstructs `<tmpdir>/<filename>`, and re-injects 100MB top-level Base64 image attachments through the 4-tier pipeline;
+2. **Non-Gemini Track (Claude / GPT / Local)**: seamlessly restores `[Image #N: filename]` back to the local file path `<tmpdir>/<filename>` without any Base64 attachments (strictly protecting Claude's 5MB API limit and letting non-Gemini models use their native `read` tool);
+3. **Expired Files**: if the temp file was evicted by OS cleanup, safely emits `[image omitted: clipboard temp file expired or missing from disk]`.
 
-**Why**: Pi's rewind and history mechanisms only restore submitted literal strings (e.g. `[Image #1]`) and do not preserve attachment metadata. Rehydrating placeholders on-demand provides a seamless Codex-like rewind and edit experience with zero memory overhead (paths only, no resident image buffers) and strict fault tolerance against missing files.
+**Why**: memory caches are lost upon Pi process restarts or cross-session `/resume` commands, turning anonymous `[Image #1]` into dead strings. Embedding filenames creates an entirely stateless, durable contract that survives restarts, crosses sessions, seamlessly accommodates model switching, and protects external model API boundaries.
 
 
 

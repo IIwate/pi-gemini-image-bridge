@@ -1,73 +1,102 @@
 /**
  * index.ts — Composition root: converts pasted clipboard images into user-message
- * attachments for Gemini-family models via a 4-tier adaptive pipeline with lazy worker
- * and session-scoped placeholder rehydration (D13).
+ * attachments for Gemini-family models via a 4-tier adaptive pipeline with lazy worker,
+ * stateless self-contained placeholders, and model-aware dual-track routing (D13).
  *
  * Why: CPA's gemini translator drops images inside functionResponse (read-tool
  * results), but translates user-message `input_image` parts correctly. Turning the
  * pasted image path into an attachment sends it through the working channel.
  *
- * Host knowledge lives here only: gates, Pi event wiring, and pipeline calls.
- * Core modules (src/core/) are pure and Pi-free.
+ * For non-Gemini models (Claude/GPT), self-contained placeholders in rewound text are
+ * seamlessly restored to local file paths without large Base64 attachments (protecting
+ * Claude's strict 5MB API limit).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
+import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
-import { createAttachmentCache } from "./core/cache.ts";
 import { createBudgetPool } from "./core/budget.ts";
-import { buildTransform, placeholderTextFor, type ConvertedItem } from "./core/build.ts";
+import {
+  buildTransform,
+  placeholderTextFor,
+  EXPIRED_PLACEHOLDER,
+  type ConvertedItem,
+} from "./core/build.ts";
 import { loadImageAdaptive } from "./core/load.ts";
-import { scanClipboardImagePaths, scanPlaceholderTokens } from "./core/scan.ts";
+import {
+  scanClipboardImagePaths,
+  scanSelfContainedPlaceholders,
+  type SelfContainedPlaceholderMatch,
+} from "./core/scan.ts";
 
 export default function (pi: ExtensionAPI) {
-  // Session-scoped in-memory cache for placeholder rehydration (decisions.md D13)
-  const attachmentCache = createAttachmentCache(50);
-
-  pi.on("session_shutdown", async () => {
-    attachmentCache.clear();
-  });
-
   pi.on("input", async (event, ctx) => {
-    // Gates fail open (decisions.md D1/D2): non-gemini models and non-interactive
-    // sources pass through untouched.
-    if (!ctx.model?.id.startsWith("gemini")) return { action: "continue" };
+    // Only intercept interactive user input (decisions.md D2)
     if (event.source !== "interactive") return { action: "continue" };
 
     const dropDir = tmpdir();
+    const isGemini = ctx.model?.id?.startsWith("gemini") ?? false;
     const rawPaths = scanClipboardImagePaths(event.text, dropDir);
-    const existingPlaceholders = scanPlaceholderTokens(event.text);
+    const placeholders = scanSelfContainedPlaceholders(event.text);
 
-    // If text contains neither raw clipboard paths nor existing placeholders, pass through
-    if (rawPaths.length === 0 && existingPlaceholders.length === 0) {
+    // If text contains neither raw paths nor self-contained placeholders, pass through
+    if (rawPaths.length === 0 && placeholders.length === 0) {
       return { action: "continue" };
     }
 
-    // Collect all targets and sort them by appearance order in text
-    interface ScanTarget {
-      token: string;
-      index: number;
-      isPlaceholder: boolean;
+    // -------------------------------------------------------------------------
+    // Track B: Non-Gemini Models (Claude / GPT / Local Models)
+    // -------------------------------------------------------------------------
+    // Restore self-contained placeholders back to local file paths so non-Gemini
+    // models can use their native read-tool. Zero Base64 attachments are injected,
+    // strictly protecting Claude's 5MB API limit.
+    if (!isGemini) {
+      if (placeholders.length === 0) return { action: "continue" };
+
+      let text = event.text;
+      for (const ph of placeholders) {
+        const physicalPath = join(dropDir, ph.filename);
+        const replacement = existsSync(physicalPath) ? physicalPath : EXPIRED_PLACEHOLDER;
+        text = text.replaceAll(ph.token, replacement);
+      }
+      return { action: "transform", text, images: event.images ?? [] };
     }
 
-    const targets: ScanTarget[] = [];
+    // -------------------------------------------------------------------------
+    // Track A: Gemini Models (4-Tier 100MB Adaptive Pipeline)
+    // -------------------------------------------------------------------------
+    interface TargetItem {
+      token: string;
+      filename: string;
+      resolvedPath: string;
+      index: number;
+    }
+
+    const targets: TargetItem[] = [];
 
     for (const p of rawPaths) {
       const idx = event.text.indexOf(p);
-      if (idx !== -1) targets.push({ token: p, index: idx, isPlaceholder: false });
-    }
-
-    for (const ph of existingPlaceholders) {
-      // Only treat as target if the placeholder was previously emitted by this session.
-      // Manually typed literal text (e.g. "[Image #1] in doc") without cache entry is ignored.
-      if (attachmentCache.has(ph)) {
-        const idx = event.text.indexOf(ph);
-        if (idx !== -1) targets.push({ token: ph, index: idx, isPlaceholder: true });
+      if (idx !== -1) {
+        targets.push({
+          token: p,
+          filename: basename(p),
+          resolvedPath: p,
+          index: idx,
+        });
       }
     }
 
-    if (targets.length === 0) {
-      return { action: "continue" };
+    for (const ph of placeholders) {
+      const idx = event.text.indexOf(ph.token);
+      if (idx !== -1) {
+        targets.push({
+          token: ph.token,
+          filename: ph.filename,
+          resolvedPath: join(dropDir, ph.filename),
+          index: idx,
+        });
+      }
     }
 
     targets.sort((a, b) => a.index - b.index);
@@ -78,38 +107,23 @@ export default function (pi: ExtensionAPI) {
     let imageIndex = 0;
 
     for (const target of targets) {
-      let resolvedPath: string | null = null;
-
-      if (!target.isPlaceholder) {
-        resolvedPath = target.token;
-      } else {
-        resolvedPath = attachmentCache.get(target.token) ?? null;
-      }
-
-      if (!resolvedPath || !existsSync(resolvedPath)) {
-        // Physical file deleted from disk after being cached (decisions.md D13)
+      if (!existsSync(target.resolvedPath)) {
         converted.push({
           target: target.token,
           label: "",
           image: null,
-          placeholder: placeholderTextFor(target.isPlaceholder ? "missing-cache" : "unreadable"),
+          placeholder: placeholderTextFor("expired"),
         });
         continue;
       }
 
-      const result = await loadImageAdaptive(resolvedPath, budgetPool);
+      const result = await loadImageAdaptive(target.resolvedPath, budgetPool);
 
       if (result.ok) {
         imageIndex++;
         const annotationSuffix = result.annotation ? ` ${result.annotation}` : "";
-        const label = `[Image #${imageIndex}${annotationSuffix}]`;
-        const canonicalLabel = `[Image #${imageIndex}]`;
-
-        // Record in session cache for future rehydration on rewind/abort
-        attachmentCache.set(canonicalLabel, resolvedPath);
-        if (annotationSuffix) {
-          attachmentCache.set(label, resolvedPath);
-        }
+        // Self-contained label embeds the filename for stateless cross-session recovery
+        const label = `[Image #${imageIndex}: ${target.filename}${annotationSuffix}]`;
 
         converted.push({
           target: target.token,

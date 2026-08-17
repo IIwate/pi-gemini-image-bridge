@@ -1,12 +1,12 @@
 /**
- * scan.ts — Pure functions for scanning clipboard image paths and placeholder tokens.
+ * scan.ts — Pure functions for scanning clipboard image paths and self-contained placeholder tokens.
  *
  * Implements S.U.P.E.R. Architecture:
  * - Single Purpose: path scanning and token extraction only. No I/O, no Pi dependencies.
  * - Cross-Platform: handles mixed slashes, lowercase/uppercase drives, spaces in usernames.
  */
 
-const CLIPBOARD_FILE_RE_SOURCE =
+export const CLIPBOARD_FILE_RE_SOURCE =
   "pi-clipboard-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(?:png|jpg|jpeg|webp|gif)";
 
 /** Escapes a directory path segment for literal use inside a RegExp. */
@@ -56,22 +56,35 @@ export function scanClipboardImagePaths(text: string, dropDir: string): string[]
   return paths;
 }
 
+export interface SelfContainedPlaceholderMatch {
+  token: string;
+  filename: string;
+}
+
 /**
- * Scans input text for existing image placeholder tokens, such as:
- *   "[Image #1]" or "[Image #1 (auto-scaled to 2560px to fit Gemini 100MB limit)]"
+ * Scans input text for self-contained image placeholder tokens, such as:
+ *   "[Image #1: pi-clipboard-11112222-3333-4444-5555-666677778888.png]"
+ *   "[Image #1: pi-clipboard-xxx.png (auto-scaled to 2560px to fit Gemini 100MB limit)]"
+ *
+ * Extracts the embedded filename directly for stateless, cross-session rehydration.
  */
-export function scanPlaceholderTokens(text: string): string[] {
+export function scanSelfContainedPlaceholders(text: string): SelfContainedPlaceholderMatch[] {
   if (!text) return [];
 
-  const regex = /\[Image #\d+(?:\s+[^\]]*)?\]/gi;
-  const results: string[] = [];
-  const seen = new Set<string>();
+  const regex = new RegExp(
+    `\\[Image #\\d+:\\s*(${CLIPBOARD_FILE_RE_SOURCE})(?:\\s+[^\\|\\]]*)?\\]`,
+    "gi",
+  );
+
+  const results: SelfContainedPlaceholderMatch[] = [];
+  const seenTokens = new Set<string>();
 
   for (const match of text.matchAll(regex)) {
     const token = match[0];
-    if (!seen.has(token)) {
-      seen.add(token);
-      results.push(token);
+    const filename = match[1];
+    if (!seenTokens.has(token)) {
+      seenTokens.add(token);
+      results.push({ token, filename });
     }
   }
 

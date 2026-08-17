@@ -57,7 +57,7 @@ export async function loadImageAdaptive(
   try {
     stats = await stat(filePath);
   } catch {
-    return { ok: false, reason: "unreadable" };
+    return { ok: false, reason: "expired" };
   }
 
   // Hard sanity ceiling check (reject files beyond 100MB instantly)

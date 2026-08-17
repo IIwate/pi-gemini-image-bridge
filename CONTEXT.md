@@ -58,15 +58,15 @@ when a Tier 2/3 task arrives, kept warm for consecutive requests, and automatica
 after 30 seconds of inactivity to reclaim all memory.
 _Avoid_: eager worker, permanent daemon (when describing thread lifecycle management)
 
-**Session Attachment Cache**:
-An in-memory LRU cache that associates emitted placeholder labels (e.g. `[Image #1]`) with
-their on-disk clipboard image file paths during the active session. Holds lightweight path
-strings only, never keeping large image buffers in memory.
-_Avoid_: disk cache, persistent store (when referring to the in-memory label-to-path registry)
+**Self-Contained Placeholder Token**:
+A stateless label format (e.g. `[Image #1: pi-clipboard-<uuid>.png]`) that embeds the original
+clipboard image filename directly into the prompt text. Enables cross-session history recall,
+restarts, and non-Gemini path restoration without resident in-memory state.
+_Avoid_: anonymous label, opaque placeholder (when referring to filename-bearing tokens)
 
-**Placeholder Rehydration**:
-The reverse-resolution process where existing `[Image #N]` labels present in rewound,
-aborted, or history-recalled draft text are restored to valid image attachments by resolving
-against the session attachment cache and re-validating the underlying files.
-_Avoid_: undo restore, text recovery (when describing placeholder-to-attachment rehydration)
+**Stateless Placeholder Rehydration**:
+The reverse-resolution process where self-contained tokens in rewound, resumed, or
+cross-session draft text extract their embedded filenames, reconstruct physical temp paths,
+and reload attachments for Gemini or restore raw paths for non-Gemini models.
+_Avoid_: cache lookup, memory recovery (when referring to stateless token rehydration)
 

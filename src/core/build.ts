@@ -4,8 +4,8 @@
  * Pi's extension runner replaces `images` when a transform returns the field
  * (`result.images ?? currentImages`), so existing event images must be re-included
  * explicitly (decisions.md D7). Failed conversions become placeholder text — the original
- * path must never survive in the outgoing text (decisions.md D6), because it would route
- * the model back into the broken read-tool image path.
+ * path must never survive in the outgoing text for Gemini (decisions.md D6), because it
+ * would route the model back into the broken read-tool image path.
  */
 
 /** Structural subset of pi-ai's ImageContent; kept local so core stays Pi-free. */
@@ -18,7 +18,7 @@ export interface ImageContent {
 export interface ConvertedItem {
   /** The target string to replace in the original text (path or placeholder token). */
   target: string;
-  /** `[Image #N]` or `[Image #N (auto-scaled...)]` label replacing the target when the conversion succeeded. */
+  /** Self-contained label (e.g. `[Image #N: filename]`) replacing the target when succeeded. */
   label: string;
   /** Converted image, or null when the conversion failed. */
   image: ImageContent | null;
@@ -31,19 +31,19 @@ export interface TransformResult {
   images: ImageContent[];
 }
 
-export type FailureReason = "too-large" | "unreadable" | "missing-cache";
+export type FailureReason = "too-large" | "unreadable" | "expired";
 
 export const TOO_LARGE_PLACEHOLDER = "[image omitted: exceeds Gemini 100MB limit even after compression]";
 export const UNREADABLE_PLACEHOLDER = "[image omitted: could not be read]";
-export const MISSING_CACHE_PLACEHOLDER = "[image omitted: cached image no longer available on disk]";
+export const EXPIRED_PLACEHOLDER = "[image omitted: clipboard temp file expired or missing from disk]";
 
 /** Returns the placeholder text for a load failure reason. */
 export function placeholderTextFor(reason: FailureReason): string {
   switch (reason) {
     case "too-large":
       return TOO_LARGE_PLACEHOLDER;
-    case "missing-cache":
-      return MISSING_CACHE_PLACEHOLDER;
+    case "expired":
+      return EXPIRED_PLACEHOLDER;
     case "unreadable":
     default:
       return UNREADABLE_PLACEHOLDER;
@@ -59,8 +59,8 @@ function escapeRegExp(s: string): string {
  * appending converted images after existing ones.
  *
  * Uses single-pass RegExp replacement with length-descending sorting to completely eliminate:
- * 1. Double substitution (e.g. replacing a path with "[Image #2]" which is later re-replaced by target "[Image #2]")
- * 2. Prefix collision (e.g. "[Image #1]" accidentally corrupting "[Image #10]")
+ * 1. Double substitution (e.g. replacing a path with "[Image #2:...]" which is later re-replaced)
+ * 2. Prefix collision (e.g. "[Image #1:...]" accidentally corrupting "[Image #10:...]")
  *
  * Returns null when there is nothing to convert.
  */
@@ -82,7 +82,7 @@ export function buildTransform(
     }
   }
 
-  // Sort keys by length descending to ensure longer tokens match first (e.g. "[Image #10]" before "[Image #1]")
+  // Sort keys by length descending to ensure longer tokens match first
   const sortedKeys = Array.from(replacementMap.keys()).sort((a, b) => b.length - a.length);
   if (sortedKeys.length === 0) return null;
 

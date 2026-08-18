@@ -1,6 +1,6 @@
 # Pi Gemini Image Bridge
 
-`v0.5.0` - Pi extension for delivering clipboard and tool-result images to Gemini-family
+`v0.5.1` - Pi extension for delivering clipboard and tool-result images to Gemini-family
 models as user-message attachments.
 
 ## Purpose
@@ -88,7 +88,7 @@ Images share a 50 MB raw-binary request budget, including existing attachments:
 The Worker is lazy, reused for nearby requests, and reclaimed after 30 seconds idle. Codec
 WASM assets are bundled; no runtime npm dependencies are required.
 
-## v0.5.0
+## v0.5.1
 
 - Renamed the package from `pi-gemini-image-paste` to `pi-gemini-image-bridge`.
 - Added stateless filename-bearing labels and model-aware recovery across model switches.

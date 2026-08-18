@@ -38,8 +38,16 @@ import {
   relayToolResultImages,
   shouldRelayToolResultImages,
 } from "./core/tool-image-relay.ts";
+import { compactImageLabelsForDisplay } from "./core/display.ts";
 
 export default function (pi: ExtensionAPI) {
+  // Keep filename-bearing tokens in session/model text, but avoid wrapping long
+  // temporary filenames in the interactive transcript.
+  pi.registerMarkdownTransformer((markdown, context) => {
+    if (context.messageType !== "user") return markdown;
+    return compactImageLabelsForDisplay(markdown);
+  });
+
   pi.on("context", (event, ctx) => {
     if (!shouldRelayToolResultImages(ctx.model)) return;
     return { messages: relayToolResultImages(event.messages) };

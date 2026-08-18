@@ -1,6 +1,6 @@
 # Pi Gemini Image Bridge
 
-`v0.5.1` - Pi extension for delivering clipboard and tool-result images to Gemini-family
+`v0.5.2` - Pi extension for delivering clipboard and tool-result images to Gemini-family
 models as user-message attachments.
 
 ## Purpose
@@ -48,7 +48,9 @@ Use `/login CLIProxyAPI` (or `/login cliproxyapi`) in Pi to configure the CPA co
 In interactive mode, paste with `Ctrl+V` on Linux/macOS/WSL or `Alt+V` on Windows, then
 send the message. A Pi clipboard path such as
 `<os.tmpdir()>/pi-clipboard-<uuid>.png` becomes a filename-bearing label and an image
-attachment.
+attachment. The stored/model label retains the filename for restart and model-switch
+recovery, while the interactive transcript renders it compactly as `[Image #N]` to avoid
+long temporary names wrapping onto a separate line.
 
 Only complete Pi clipboard-drop paths with `png`, `jpg`, `jpeg`, `webp`, or `gif` are matched.
 Non-interactive input (`pi -p`, RPC) passes through unchanged.
@@ -87,6 +89,10 @@ Images share a 50 MB raw-binary request budget, including existing attachments:
 
 The Worker is lazy, reused for nearby requests, and reclaimed after 30 seconds idle. Codec
 WASM assets are bundled; no runtime npm dependencies are required.
+
+## v0.5.2
+
+- Render interactive transcript image labels compactly as `[Image #N]` using Pi's Markdown transformer to prevent terminal line wraps while preserving filenames in session text.
 
 ## v0.5.1
 

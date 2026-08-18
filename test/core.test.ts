@@ -16,6 +16,7 @@ import {
   scanSelfContainedPlaceholders,
   extractFilename,
 } from "../src/core/scan.ts";
+import { compactImageLabelsForDisplay } from "../src/core/display.ts";
 import {
   DEFAULT_MAX_REQUEST_BYTES,
   base64DecodedByteLength,
@@ -580,6 +581,14 @@ test("load adaptive cascades budget across multiple images in a single pool (Tie
 // ---------------------------------------------------------------------------
 // build.ts
 // ---------------------------------------------------------------------------
+
+test("display compacts self-contained labels without changing transport metadata", () => {
+  const annotated = `[Image #1: ${CLIP_FILENAME} (auto-scaled to 2560px to fit Gemini 100MB limit)]`;
+  const markdown = `analyze ${annotated} and [Image #2: ${CLIP_FILENAME}]`;
+
+  assert.equal(compactImageLabelsForDisplay(markdown), "analyze [Image #1] and [Image #2]");
+  assert.match(markdown, new RegExp(CLIP_FILENAME));
+});
 
 const IMG: ImageContent = { type: "image", mimeType: "image/png", data: "aGVsbG8=" };
 

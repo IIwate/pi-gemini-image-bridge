@@ -5,7 +5,7 @@ This file is the repository-level execution guide and the single source of truth
 ## Read before changing code
 
 - Before changing `src/`, read the [architecture map](docs/architecture/index.md) and the target module's source; the pipeline is small, so reading the two adjacent modules is sufficient context.
-- Before changing product behavior (matching rules, size limit, placeholder text), read [architecture decisions](docs/architecture/decisions.md) (D1–D13). Decision changes and implementation must move together.
+- Before changing product behavior (matching rules, size limit, placeholder text), read [architecture decisions](docs/architecture/decisions.md) (D1–D15). Decision changes and implementation must move together.
 - Before touching user-facing docs, read [README.md](README.md) — it owns background, usage, verification, and known limits.
 - Read the defensive notes in [architecture map](docs/architecture/index.md) before lifecycle, event-loop, or Pi host interaction work.
 
@@ -35,7 +35,7 @@ Each core module has a single job, a serializable contract, and no reverse depen
 ## Documentation ownership
 
 - `README.md` owns background, usage, verification steps, and known limits.
-- `docs/architecture/decisions.md` owns confirmed product decisions (D1–D13).
+- `docs/architecture/decisions.md` owns confirmed product decisions (D1–D15).
 - `docs/architecture/index.md` owns the system map, data-flow direction, and module contracts.
 - `CONTEXT.md` owns domain vocabulary only; it does not own architecture rationale.
 - `AGENTS.md` owns workflow, routing, and repository-wide engineering rules.
@@ -45,7 +45,7 @@ Keep one authoritative home for each fact. Other documents link to that authorit
 
 ## Defensive change entry points
 
-- Input transform behavior (matching, merging `event.images`, placeholder numbering): read `src/core/build.ts` contract and [decisions.md](docs/architecture/decisions.md) D3–D13.
+- Input transform behavior (matching, merging `event.images`, placeholder numbering): read `src/core/build.ts` contract and [decisions.md](docs/architecture/decisions.md) D3–D15.
 - Pi host interaction (event registration, `ctx.model`, `ctx.ui`): read `src/index.ts`; keep host knowledge out of `src/core/`.
 - Size-limit or failure handling: read `src/core/load.ts`; the failure contract is "replace with placeholder text, never leave the original path".
 

@@ -148,6 +148,22 @@ OpenAI Completions and native Google Gemini traffic are outside this relay gate.
 An unrecognized proxy API, a non-Gemini model, or a model without image input support is
 left untouched until it is explicitly verified.
 
+## D15 — Compact Transcript Labels
+
+**Settled**: keep the full self-contained token (`[Image #N: filename]`, including any
+downscaling annotation) in the transformed text sent to the model and stored in the
+session, but register a Pi Markdown transformer that renders it as `[Image #N]` in the
+interactive transcript. The display transform applies only to user messages and does not
+alter provider payloads or rehydration input.
+
+**Why**: temporary clipboard filenames are long enough to wrap onto a separate line in
+the terminal, making an otherwise inline image attachment look like a broken or truncated
+text block. Pi explicitly supports display-only Markdown transformers, so the visual label
+can be shortened without weakening D13's stateless recovery contract.
+
+**Trade-off**: the filename is no longer visible in the rendered transcript. It remains
+available in the stored message and can be recovered by rewinding or switching models.
+
 
 
 

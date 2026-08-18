@@ -2,7 +2,7 @@
 
 System map for the S.U.P.E.R. pipeline. This file owns the module contracts and data-flow
 direction; product decisions (matching scope, size limit, placeholder text) live in
-[decisions.md](./decisions.md) (D1–D14).
+[decisions.md](./decisions.md) (D1–D15).
 
 ## System map
 
@@ -12,6 +12,7 @@ src/core/scan.ts   Pure: extract clipboard paths & self-contained placeholder to
 src/core/budget.ts Pure: request budget with existing-attachment reservation
 src/core/load.ts   Pure/I/O: validated 4-tier adaptive image loader
 src/core/build.ts  Pure: single-pass regex replacement & honest omission text assembly
+src/core/display.ts Pure: compact presentation labels without changing transport text
 src/core/tool-image-relay.ts Pure: build transient user-attachment views for Responses tool images
 src/wasm/pool.ts   Worker thread manager (lazy worker spawn on Tier 2/3, 30s idle auto-reclaim, 5s timeout)
 src/wasm/protocol.ts Serializable worker request/response contract
@@ -49,6 +50,10 @@ build.ts ───────────────► TransformResult { text
    │                        images: [...event.images, ...converted]
    ▼
 index.ts returns { action: "transform", ... }
+   │
+   │  registerMarkdownTransformer compacts labels only in the interactive transcript
+   ▼
+Pi renders [Image #N] while preserving the filename-bearing token in session/model text
 ```
 
 Tool-result image relay (D14) runs on the separate `context` event immediately before
@@ -144,6 +149,16 @@ buildTransform(originalText: string, existingImages: ImageContent[], converted: 
 ```
 
 Single responsibility: assemble the final text/images payload. No file I/O, no scanning.
+
+### display.ts
+
+```ts
+// Replaces filename-bearing labels with compact labels for transcript rendering only.
+compactImageLabelsForDisplay(markdown: string): string
+```
+
+Single responsibility: presentation formatting. It never changes the transform payload,
+session text, or model input.
 
 ### tool-image-relay.ts
 

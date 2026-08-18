@@ -105,6 +105,11 @@ test("scan rejects clipboard-path substrings and extension prefixes", () => {
   assert.deepEqual(scanClipboardImagePaths(`/${filename}`, "/"), [`/${filename}`]);
 });
 
+test("scan matches paths adjacent to CJK prose", () => {
+  const path = `/tmp/pi-clipboard-${UUID}.png`;
+  assert.deepEqual(scanClipboardImagePaths(`使用read工具再看${path}图片`, WSL_DROP_DIR), [path]);
+});
+
 test("scan returns empty for text without matches", () => {
   assert.deepEqual(scanClipboardImagePaths("no images here", WSL_DROP_DIR), []);
   assert.deepEqual(scanClipboardImagePaths("", WSL_DROP_DIR), []);

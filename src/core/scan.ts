@@ -42,8 +42,10 @@ function buildClipboardPathRegex(dropDir: string): RegExp {
   }
 
   const separator = segments.length === 0 ? "" : "[\\\\/]+";
-  const leftBoundary = "(?<![\\p{L}\\p{N}_\\\\/])";
-  const rightBoundary = "(?![\\p{L}\\p{N}_.:\\\\/-])";
+  // Only path-like ASCII characters can continue or prefix this generated path.
+  // Unicode prose, including CJK text, may touch the path without making it invalid.
+  const leftBoundary = "(?<![A-Za-z0-9_.:\\\\/-])";
+  const rightBoundary = "(?![A-Za-z0-9_.:\\\\/-])";
   return new RegExp(
     `${leftBoundary}${prefixPattern}${separator}${CLIPBOARD_FILE_RE_SOURCE}${rightBoundary}`,
     "giu",

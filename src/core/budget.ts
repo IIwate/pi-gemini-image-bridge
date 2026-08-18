@@ -20,11 +20,30 @@ export interface BudgetPool {
   allocate(neededBytes: number): BudgetAllocation;
 }
 
+/** Returns the decoded byte length of an unprefixed Base64 payload. */
+export function base64DecodedByteLength(data: string): number {
+  if (data.length === 0) return 0;
+
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
+}
+
 /**
  * Creates a greedy budget pool that allocates binary payload budget in order of request.
+ * Existing request attachments consume the same request-level ceiling before new allocations.
  */
-export function createBudgetPool(totalBytes = DEFAULT_MAX_REQUEST_BYTES): BudgetPool {
-  let remaining = totalBytes;
+export function createBudgetPool(
+  totalBytes = DEFAULT_MAX_REQUEST_BYTES,
+  reservedBytes = 0,
+): BudgetPool {
+  if (!Number.isFinite(totalBytes) || totalBytes < 0) {
+    throw new RangeError("totalBytes must be a finite non-negative number");
+  }
+  if (!Number.isFinite(reservedBytes) || reservedBytes < 0) {
+    throw new RangeError("reservedBytes must be a finite non-negative number");
+  }
+
+  let remaining = Math.max(0, totalBytes - reservedBytes);
 
   return {
     get totalBytes() {
@@ -34,6 +53,13 @@ export function createBudgetPool(totalBytes = DEFAULT_MAX_REQUEST_BYTES): Budget
       return remaining;
     },
     allocate(neededBytes: number): BudgetAllocation {
+      if (neededBytes <= 0 || !Number.isFinite(neededBytes)) {
+        return {
+          granted: false,
+          allocatedBytes: 0,
+          remainingBytes: remaining,
+        };
+      }
       if (neededBytes <= remaining) {
         remaining -= neededBytes;
         return {

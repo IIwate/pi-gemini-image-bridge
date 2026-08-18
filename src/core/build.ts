@@ -8,6 +8,8 @@
  * would route the model back into the broken read-tool image path.
  */
 
+import type { FailureReason } from "./load.ts";
+
 /** Structural subset of pi-ai's ImageContent; kept local so core stays Pi-free. */
 export interface ImageContent {
   type: "image";
@@ -31,9 +33,10 @@ export interface TransformResult {
   images: ImageContent[];
 }
 
-export type FailureReason = "too-large" | "unreadable" | "expired";
-
-export const TOO_LARGE_PLACEHOLDER = "[image omitted: exceeds Gemini 100MB limit even after compression]";
+export const TOO_LARGE_PLACEHOLDER = "[image omitted: exceeds 100MB hard file limit]";
+export const BUDGET_EXHAUSTED_PLACEHOLDER =
+  "[image omitted: does not fit remaining request image budget]";
+export const PROCESSING_TIMEOUT_PLACEHOLDER = "[image omitted: image processing timed out]";
 export const UNREADABLE_PLACEHOLDER = "[image omitted: could not be read]";
 export const EXPIRED_PLACEHOLDER = "[image omitted: clipboard temp file expired or missing from disk]";
 
@@ -42,6 +45,10 @@ export function placeholderTextFor(reason: FailureReason): string {
   switch (reason) {
     case "too-large":
       return TOO_LARGE_PLACEHOLDER;
+    case "budget-exhausted":
+      return BUDGET_EXHAUSTED_PLACEHOLDER;
+    case "processing-timeout":
+      return PROCESSING_TIMEOUT_PLACEHOLDER;
     case "expired":
       return EXPIRED_PLACEHOLDER;
     case "unreadable":

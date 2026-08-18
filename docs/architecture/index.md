@@ -2,19 +2,20 @@
 
 System map for the S.U.P.E.R. pipeline. This file owns the module contracts and data-flow
 direction; product decisions (matching scope, size limit, placeholder text) live in
-[decisions.md](./decisions.md) (D1–D8).
+[decisions.md](./decisions.md) (D1–D13).
 
 ## System map
 
 ```text
 src/index.ts       Composition root / Pi adapter (model-aware dual-track routing & rehydration)
 src/core/scan.ts   Pure: extract clipboard paths & self-contained placeholder tokens
-src/core/budget.ts Pure: dynamic greedy budget allocation for multi-image prompts
-src/core/load.ts   Pure/I/O: 4-tier adaptive image loader (Fast-Path → Lazy Worker WASM → Floor)
+src/core/budget.ts Pure: request budget with existing-attachment reservation
+src/core/load.ts   Pure/I/O: validated 4-tier adaptive image loader
 src/core/build.ts  Pure: single-pass regex replacement & honest omission text assembly
 src/wasm/pool.ts   Worker thread manager (lazy worker spawn on Tier 2/3, 30s idle auto-reclaim, 5s timeout)
-src/wasm/worker.ts Background worker thread (offloads CPU-bound WASM math from main loop)
-src/wasm/engine.ts In-worker WASM codecs (zero external npm dependencies)
+src/wasm/protocol.ts Serializable worker request/response contract
+src/wasm/worker.js node_modules-safe background worker entry point
+src/wasm/engine.js In-worker WASM codecs (zero external npm dependencies)
 test/              node:test unit tests over the core contracts
 ```
 
@@ -33,11 +34,11 @@ index.ts  gates: model.id startsWith "gemini" AND source === "interactive"
    ▼
 scan.ts ────────────────► string[]  (clipboard-image paths, in order of appearance)
    │
-   │  budget.ts calculates dynamic budget pool (50MB base)
+   │  budget.ts reserves event.images, then allocates the 50MB shared pool
    ▼
 load.ts ────────────────► 4-Tier Adaptive Loader:
-   │                         Tier 1: Fast-Path Passthrough (≤ budget, 0ms, 100% lossless)
-   │                         Tier 2: WASM Lossless Optimization (WebP/PNG without resolution loss)
+   │                         Tier 1: Structure-Validated Passthrough (original bytes)
+   │                         Tier 2: WASM Lossless Optimization (PNG DEFLATE optimization without resolution loss)
    │                         Tier 3: Fidelity-Guarded Resampling (Lanczos3 down to 2560px/2048px)
    │                         Tier 4: Hard Safety Floor (Honest omission placeholder)
    ▼
@@ -61,40 +62,89 @@ All cross-module values are serializable plain data.
 ```ts
 // Returns clipboard-image paths found in `text`, in order of appearance.
 // Only matches the Pi clipboard drop pattern under the given temp directory
-// (decisions.md D3): <dropDir>/pi-clipboard-<uuid>.png|jpg|webp|gif, accepting
+// (decisions.md D3): <dropDir>/pi-clipboard-<uuid>.png|jpg|jpeg|webp|gif, accepting
 // both / and \ separators (WSL and Windows hosts). No matches -> empty array.
 scanClipboardImagePaths(text: string, dropDir: string): string[]
+
+// Scans text for self-contained placeholder tokens ([Image #N: filename (annotation)])
+// and extracts embedded filenames directly for stateless rehydration (decisions.md D13).
+scanSelfContainedPlaceholders(text: string): SelfContainedPlaceholderMatch[]
+
+// Extracts filename from path cleanly across POSIX / Windows backslashes.
+extractFilename(filePath: string): string
 ```
 
-Single responsibility: matching only. It never reads files and never touches images.
+Single responsibility: matching and token extraction only. It never reads files and never touches images.
+
+### budget.ts
+
+```ts
+export const DEFAULT_MAX_REQUEST_BYTES = 50 * 1024 * 1024; // 50MB raw binary
+
+// Returns the decoded byte length of an unprefixed Base64 payload.
+base64DecodedByteLength(data: string): number
+
+export interface BudgetPool {
+  readonly totalBytes: number;
+  readonly remainingBytes: number;
+  allocate(neededBytes: number): BudgetAllocation;
+}
+
+// Creates a greedy budget pool after reserving bytes for existing attachments.
+createBudgetPool(totalBytes?: number, reservedBytes?: number): BudgetPool
+```
+
+Single responsibility: dynamic greedy request-level binary budget calculation (decisions.md D5 & D11).
 
 ### load.ts
 
 ```ts
-interface LoadedImage { mimeType: string; data: string } // data is base64 (no data: prefix)
+interface LoadedImage { type: "image"; mimeType: string; data: string } // data is base64
 
-// Reads `path` and encodes it as base64. Rejects when the file exceeds
-// MAX_IMAGE_BYTES (50MB, decisions.md D5) or cannot be read.
-// Errors are data, not exceptions: callers branch on `ok`.
-loadImage(path: string): { ok: true; image: LoadedImage } | { ok: false; reason: "too-large" | "unreadable" }
+export type AdaptiveTier = "passthrough" | "lossless" | "downscaled";
+export type FailureReason = "too-large" | "budget-exhausted" | "processing-timeout" | "unreadable" | "expired";
+export type AdaptiveLoadResult =
+  | { ok: true; tier: AdaptiveTier; image: LoadedImage; annotation: string | null }
+  | { ok: false; reason: FailureReason };
+
+// Loads an image through the 4-tier adaptive pipeline with background worker offloading.
+// Structure-validates passthrough files and returns reason-specific failures for hard limits,
+// request budget, timeout, expiration, and unreadable content.
+loadImageAdaptive(filePath: string, budgetPool: BudgetPool): Promise<AdaptiveLoadResult>
 ```
 
-Single responsibility: file → base64 with the size gate. No text rewriting.
+Single responsibility: 4-tier file loading & degradation decision ladder. No text rewriting.
 
 ### build.ts
 
 ```ts
+export interface ConvertedItem {
+  target: string;      // path or self-contained token
+  label: string;       // [Image #N: filename] with optional transparent annotation
+  image: ImageContent | null;
+  placeholder: string; // honest omission text when image is null
+}
+
 interface TransformResult {
-  text: string;      // paths replaced by [Image #N]; failures replaced by placeholder text
+  text: string;      // paths replaced by [Image #N: filename]; failures replaced by placeholder text
   images: ImageContent[]; // [...existingImages, ...converted] (decisions.md D7)
 }
 
-// existingImages come from event.images; matches are scan+load results.
-// Returns null when there is nothing to convert (caller continues unchanged).
-buildTransform(text: string, existingImages: ImageContent[], loaded: { path: string; result: LoadImageResult }[]): TransformResult | null
+// Assembles the final text payload via single-pass regex replacement (preventing prefix
+// collisions and double substitution) and merges converted images after existing ones.
+buildTransform(originalText: string, existingImages: ImageContent[], converted: ConvertedItem[]): TransformResult | null
 ```
 
 Single responsibility: assemble the final text/images payload. No file I/O, no scanning.
+
+### wasm/ (Worker & Engine)
+
+```ts
+// Offloads CPU-bound WebAssembly operations to a node_modules-safe JavaScript worker (D12).
+processImageInWorker(filePath: string, remainingBytes: number): Promise<WorkerTaskResponse>
+```
+
+Single responsibility: lazy worker lifecycle management, 30s idle auto-reclaim, and WASM PNG/Lanczos3 processing.
 
 ## Environment-agnostic (E)
 
@@ -107,6 +157,8 @@ Single responsibility: assemble the final text/images payload. No file I/O, no s
   `@earendil-works/pi-coding-agent`; devDependencies `typescript`/`@types/node` optional
   for typecheck). Runtime has zero third-party imports.
 - Logging: no user-facing notification on failure (decisions.md D6); core modules stay silent.
+- The Worker runtime graph is native ESM JavaScript so npm-installed packages do not depend on
+  Node's unsupported TypeScript stripping inside `node_modules` (decisions.md D12).
 
 ## Replaceability (R)
 
@@ -119,20 +171,22 @@ Single responsibility: assemble the final text/images payload. No file I/O, no s
 
 ## Defensive notes
 
-- **Failure boundary**: `load.ts` never throws; unreadable/oversized files become
+- **Failure boundary**: `load.ts` never throws; unreadable, expired, hard-limit, budget, and timeout failures become
   placeholder text in `build.ts` (decisions.md D6). The original path must never survive
   in the outgoing text — it would route the model back into the broken `read` path.
-- **Gates fail open**: when the model is not gemini or the source is not
-  interactive, `index.ts` returns `{ action: "continue" }` and the message is
-  untouched (D1–D2). The plugin must never alter non-target traffic.
+- **Gates fail open & Dual-track routing**: when the source is not interactive,
+  or the model is not gemini and the prompt contains no placeholder tokens,
+  `index.ts` returns `{ action: "continue" }` and the message is untouched (D1–D2).
+  When a non-Gemini model encounters self-contained tokens, Track B restores them to
+  local file paths without Base64 attachments (D13). The plugin never alters non-target traffic.
 - **Merge semantics**: Pi's extension runner replaces `images` when transform
   returns the field (`result.images ?? currentImages`), so `build.ts` must re-include
   `event.images` explicitly (D7). Dropping them would silently detach user images.
 
 ## Verification strategy
 
-- Unit tests (`test/`, node:test) cover the three core contracts: match/no-match,
-  size gate, read failure, numbering, merge, and placeholder replacement — with
-  zero Pi involvement (U litmus test).
+- Tests (`test/`, node:test) cover matching boundaries, existing-attachment budget reservation,
+  validation, all adaptive tiers, Worker replacement isolation, npm `node_modules` startup,
+  numbering, merge, and placeholder replacement with zero Pi involvement.
 - `src/index.ts` (composition root) is kept thin on purpose; it is exercised by the
   interactive verification in [README.md](../../README.md) rather than unit tests.

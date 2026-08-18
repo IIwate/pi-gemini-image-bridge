@@ -41,7 +41,13 @@ function buildClipboardPathRegex(dropDir: string): RegExp {
     prefixPattern = `[\\\\/]+${prefixPattern}`;
   }
 
-  return new RegExp(`${prefixPattern}[\\\\/]+${CLIPBOARD_FILE_RE_SOURCE}`, "gi");
+  const separator = segments.length === 0 ? "" : "[\\\\/]+";
+  const leftBoundary = "(?<![\\p{L}\\p{N}_\\\\/])";
+  const rightBoundary = "(?![\\p{L}\\p{N}_.:\\\\/-])";
+  return new RegExp(
+    `${leftBoundary}${prefixPattern}${separator}${CLIPBOARD_FILE_RE_SOURCE}${rightBoundary}`,
+    "giu",
+  );
 }
 
 /**
@@ -82,7 +88,7 @@ export function scanSelfContainedPlaceholders(text: string): SelfContainedPlaceh
   if (!text) return [];
 
   const regex = new RegExp(
-    `\\[Image #\\d+:\\s*(${CLIPBOARD_FILE_RE_SOURCE})(?:\\s+[^\\|\\]]*)?\\]`,
+    `\\[Image #\\d+:\\s*(${CLIPBOARD_FILE_RE_SOURCE})(?:\\s+\\(auto-scaled to (?:2560|2048)px to fit Gemini 100MB limit\\))?\\]`,
     "gi",
   );
 

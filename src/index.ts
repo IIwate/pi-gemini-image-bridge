@@ -16,7 +16,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { existsSync } from "node:fs";
-import { createBudgetPool } from "./core/budget.ts";
+import {
+  DEFAULT_MAX_REQUEST_BYTES,
+  base64DecodedByteLength,
+  createBudgetPool,
+} from "./core/budget.ts";
 import {
   buildTransform,
   placeholderTextFor,
@@ -102,8 +106,13 @@ export default function (pi: ExtensionAPI) {
 
     targets.sort((a, b) => a.index - b.index);
 
-    // Dynamic greedy budget pool: 50MB raw binary ceiling (decisions.md D5 & D11)
-    const budgetPool = createBudgetPool();
+    // Existing attachments and converted images share one request-level ceiling (D5 & D11)
+    const existingImages = event.images ?? [];
+    const reservedBytes = existingImages.reduce(
+      (total, image) => total + base64DecodedByteLength(image.data),
+      0,
+    );
+    const budgetPool = createBudgetPool(DEFAULT_MAX_REQUEST_BYTES, reservedBytes);
     const converted: ConvertedItem[] = [];
     let imageIndex = 0;
 
@@ -142,7 +151,7 @@ export default function (pi: ExtensionAPI) {
       }
     }
 
-    const built = buildTransform(event.text, event.images ?? [], converted);
+    const built = buildTransform(event.text, existingImages, converted);
     if (!built) return { action: "continue" };
     return { action: "transform", text: built.text, images: built.images };
   });

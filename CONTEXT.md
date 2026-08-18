@@ -26,24 +26,26 @@ A pasted clipboard image saved to disk by Pi's `handleClipboardPaste`, matching
 `<os.tmpdir()>/pi-clipboard-<uuid>.<ext>`. The only image path pattern the plugin converts.
 _Avoid_: temp image, screenshot file, clipboard image (when the exact path pattern matters)
 
-**Placeholder Label ([Image #N])**:
-The `[Image #1]`-style label that replaces a converted image path in the user's text,
-numbered in order of appearance. When an image is downscaled to fit the API limit,
-the label becomes transparently annotated (e.g. `[Image #1 (auto-scaled to 2560px to fit Gemini 100MB limit)]`).
-_Avoid_: tag, replacement text (when referring to the emitted label in prompts)
+**Self-Contained Placeholder Token**:
+A stateless label format (e.g. `[Image #1: pi-clipboard-<uuid>.png]`) that embeds the original
+clipboard image filename directly into the prompt text, with optional transparent annotation
+(e.g. `[Image #1: pi-clipboard-<uuid>.png (auto-scaled to 2560px to fit Gemini 100MB limit)]`).
+Enables cross-session history recall, restarts, and non-Gemini path restoration without resident
+in-memory state.
+_Avoid_: anonymous label, opaque placeholder, tag, replacement text (when referring to filename-bearing tokens)
 
 **Tiered Adaptive Pipeline**:
 The 4-tier progressive degradation ladder for processing clipboard images:
-1. Tier 1 (Fast-Path Passthrough): 0ms, 100% bit-level lossless for sizes within budget (≤ 50MB);
-2. Tier 2 (Lossless Optimization): In-process WASM lossless re-compression without resolution loss;
+1. Tier 1 (Validated Passthrough): Lightweight structure validation and original-byte passthrough for files within the remaining request budget;
+2. Tier 2 (Lossless Optimization): WASM PNG re-encoding that preserves decoded pixels without preserving file metadata or byte identity;
 3. Tier 3 (Fidelity-Guarded Resampling): Lanczos3 downscaling with hard floors at 2560px/2048px to preserve code OCR clarity;
-4. Tier 4 (Hard Safety Floor): Honest placeholder omission to strictly avoid exceeding Gemini's 100MB request limit.
+4. Tier 4 (Hard Safety Floor): Reason-specific placeholder omission for hard-limit, request-budget, timeout, expired, and unreadable failures.
 _Avoid_: compression pipeline, image resizing (when referring to the 4-tier decision ladder)
 
 **Dynamic Greedy Budget Pool**:
 The total request-level binary budget (~50MB raw binary, ~66.7MB Base64) derived from the 100MB
-Gemini API limit minus context safety margins. Multiple images in a single prompt consume
-from this pool greedily in order of appearance.
+Gemini API limit minus context safety margins. Existing attachments reserve their decoded byte
+length first; newly converted images consume the remainder greedily in order of appearance.
 _Avoid_: static budget, image size limit (when referring to the multi-image shared pool)
 
 **Worker Thread Pipeline**:
@@ -58,15 +60,8 @@ when a Tier 2/3 task arrives, kept warm for consecutive requests, and automatica
 after 30 seconds of inactivity to reclaim all memory.
 _Avoid_: eager worker, permanent daemon (when describing thread lifecycle management)
 
-**Self-Contained Placeholder Token**:
-A stateless label format (e.g. `[Image #1: pi-clipboard-<uuid>.png]`) that embeds the original
-clipboard image filename directly into the prompt text. Enables cross-session history recall,
-restarts, and non-Gemini path restoration without resident in-memory state.
-_Avoid_: anonymous label, opaque placeholder (when referring to filename-bearing tokens)
-
 **Stateless Placeholder Rehydration**:
 The reverse-resolution process where self-contained tokens in rewound, resumed, or
 cross-session draft text extract their embedded filenames, reconstruct physical temp paths,
 and reload attachments for Gemini or restore raw paths for non-Gemini models.
 _Avoid_: cache lookup, memory recovery (when referring to stateless token rehydration)
-

@@ -5,7 +5,7 @@ This file is the repository-level execution guide and the single source of truth
 ## Read before changing code
 
 - Before changing `src/`, read the [architecture map](docs/architecture/index.md) and the target module's source; the pipeline is small, so reading the two adjacent modules is sufficient context.
-- Before changing product behavior (matching rules, size limit, placeholder text), read [architecture decisions](docs/architecture/decisions.md) (D1–D8). Decision changes and implementation must move together.
+- Before changing product behavior (matching rules, size limit, placeholder text), read [architecture decisions](docs/architecture/decisions.md) (D1–D13). Decision changes and implementation must move together.
 - Before touching user-facing docs, read [README.md](README.md) — it owns background, usage, verification, and known limits.
 - Read the defensive notes in [architecture map](docs/architecture/index.md) before lifecycle, event-loop, or Pi host interaction work.
 
@@ -15,11 +15,17 @@ This file is the repository-level execution guide and the single source of truth
 src/index.ts       Composition root: registers pi.on("input"), wires the pipeline
 src/core/          Pure logic, zero Pi/Node-host coupling beyond fs/path
   scan.ts          Matches clipboard-image paths in input text
+  budget.ts        Allocates the shared request-level image budget
   load.ts          Reads a file into base64 + mimeType with the size limit
   build.ts         Assembles the transform payload (text + images)
+src/wasm/          Node worker and self-contained WASM image runtime
+  pool.ts          Worker lifecycle and task isolation
+  protocol.ts      Serializable worker request/response contract
+  worker.js        node_modules-safe worker entry point
+  engine.js        WASM codec adapter used by the worker and tests
 test/              node:test unit tests for core modules
 docs/architecture/ System map, data flow, and module contracts
-  decisions.md    Confirmed product decisions (D1–D8)
+  decisions.md    Confirmed product decisions (D1–D13)
 README.md         Background, usage, verification, known limits
 CONTEXT.md        Domain vocabulary only; carries no architecture rationale
 ```
@@ -29,7 +35,7 @@ Each core module has a single job, a serializable contract, and no reverse depen
 ## Documentation ownership
 
 - `README.md` owns background, usage, verification steps, and known limits.
-- `docs/architecture/decisions.md` owns confirmed product decisions (D1–D8).
+- `docs/architecture/decisions.md` owns confirmed product decisions (D1–D13).
 - `docs/architecture/index.md` owns the system map, data-flow direction, and module contracts.
 - `CONTEXT.md` owns domain vocabulary only; it does not own architecture rationale.
 - `AGENTS.md` owns workflow, routing, and repository-wide engineering rules.
@@ -39,7 +45,7 @@ Keep one authoritative home for each fact. Other documents link to that authorit
 
 ## Defensive change entry points
 
-- Input transform behavior (matching, merging `event.images`, placeholder numbering): read `src/core/build.ts` contract and [decisions.md](docs/architecture/decisions.md) D3–D7.
+- Input transform behavior (matching, merging `event.images`, placeholder numbering): read `src/core/build.ts` contract and [decisions.md](docs/architecture/decisions.md) D3–D13.
 - Pi host interaction (event registration, `ctx.model`, `ctx.ui`): read `src/index.ts`; keep host knowledge out of `src/core/`.
 - Size-limit or failure handling: read `src/core/load.ts`; the failure contract is "replace with placeholder text, never leave the original path".
 
@@ -198,7 +204,7 @@ Run this checklist after every task before marking it complete.
 
 **Typecheck:** `npx tsc --noEmit` (devDependency `typescript`, optional).
 
-**Tests:** `node --test test/` runs the suite with Node's built-in test runner and native type stripping (Node >= 23.6). No test framework dependency.
+**Tests:** `node --test` runs the suite with Node's built-in test runner and native type stripping (Node >= 23.6). No test framework dependency.
 
 During implementation, run the narrowest tests that cover the change. Before claiming checks pass, run the S.U.P.E.R. checklist above against the diff.
 

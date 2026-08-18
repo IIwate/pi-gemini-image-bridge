@@ -1,25 +1,37 @@
 # Pi Gemini Image Paste
 
 A Pi extension that converts pasted clipboard images into message attachments for
-Gemini-family models, bypassing the broken `read`-tool image path in the CPA proxy.
+Gemini-family models and relays tool-result images through the user-attachment channel
+when a Responses proxy drops nested image blocks.
 
 ## Language
 
 **Gemini-Family Models**:
-Models whose ID starts with `gemini` (e.g. `gemini-3.7-flash-high`, `gemini-pro-agent`).
-_Avoid_: Google models, multimodal models (when referring specifically to the plugin's target gate)
+Models whose ID starts with `gemini` and whose `input` metadata includes `image`
+(e.g. `gemini-3.7-flash-high`, `gemini-pro-agent`).
+_Avoid_: models without declared image input support (when referring specifically to the plugin's target gate)
 
-**Read-Tool Broken Path**:
-The `read` tool → CPA `functionResponse` → Gemini upstream path, where images are
-dropped because CPA does not translate them to `inlineData` and Gemini does not
-support images inside `FunctionResponse`.
-_Avoid_: read tool failure, tool image loss (when distinguishing from user-message attachments)
+**Responses Tool-Image Gap**:
+The Pi `toolResult` image block → Responses `function_call_output` → Gemini proxy path,
+where a proxy such as CLIProxyAPI can drop nested image blocks during translation.
+Pi has already produced the image; the gap is at the proxy boundary. Native Google
+conversion and verified OpenAI Completions paths are outside this term.
+_Avoid_: read tool failure, Pi image loss (when distinguishing the proxy translation gap)
 
 **Image Passthrough**:
 The plugin's core mechanism: converting a pasted clipboard image file path found in
 interactive input text into an image attachment on the user message, so the image
-travels via the user-message channel (which CPA translates correctly to `inline_data`).
+travels via the user-message channel (which Responses proxies translate correctly to
+`input_image`/`inline_data`).
 _Avoid_: bypass, workaround (when naming the feature)
+
+**Tool-Image Relay**:
+A request-scoped context transformation for allowlisted Responses APIs. It removes
+`ImageContent` blocks from consecutive `toolResult` messages, preserves their text and
+`toolCallId` pairing, then appends one temporary user message containing the images in
+order. It applies to every image-producing tool, not only `read`, and never changes the
+stored session.
+_Avoid_: sendUserMessage, synthetic user turn (the relay is not a visible message or extra turn)
 
 **Clipboard Drop File**:
 A pasted clipboard image saved to disk by Pi's `handleClipboardPaste`, matching

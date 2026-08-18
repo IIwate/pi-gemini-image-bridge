@@ -2,16 +2,17 @@
 
 System map for the S.U.P.E.R. pipeline. This file owns the module contracts and data-flow
 direction; product decisions (matching scope, size limit, placeholder text) live in
-[decisions.md](./decisions.md) (D1–D13).
+[decisions.md](./decisions.md) (D1–D14).
 
 ## System map
 
 ```text
-src/index.ts       Composition root / Pi adapter (model-aware dual-track routing & rehydration)
+src/index.ts       Composition root / Pi adapter (clipboard routing, context relay & rehydration)
 src/core/scan.ts   Pure: extract clipboard paths & self-contained placeholder tokens
 src/core/budget.ts Pure: request budget with existing-attachment reservation
 src/core/load.ts   Pure/I/O: validated 4-tier adaptive image loader
 src/core/build.ts  Pure: single-pass regex replacement & honest omission text assembly
+src/core/tool-image-relay.ts Pure: build transient user-attachment views for Responses tool images
 src/wasm/pool.ts   Worker thread manager (lazy worker spawn on Tier 2/3, 30s idle auto-reclaim, 5s timeout)
 src/wasm/protocol.ts Serializable worker request/response contract
 src/wasm/worker.js node_modules-safe background worker entry point
@@ -29,7 +30,8 @@ know nothing about Pi.
 Pi input event
    │  text, images, source, ctx.model
    ▼
-index.ts  gates: model.id startsWith "gemini" AND source === "interactive"
+index.ts  gates: model.id startsWith "gemini" AND model.input includes "image"
+           AND source === "interactive"
    │  text (unchanged)
    ▼
 scan.ts ────────────────► string[]  (clipboard-image paths, in order of appearance)
@@ -48,6 +50,12 @@ build.ts ───────────────► TransformResult { text
    ▼
 index.ts returns { action: "transform", ... }
 ```
+
+Tool-result image relay (D14) runs on the separate `context` event immediately before
+provider conversion. It is enabled only for Gemini image-capable models on the allowlisted
+Responses APIs. It scans consecutive `toolResult` messages, retains their text and IDs,
+then appends one transient `user` message with the extracted images. The returned view is
+request-scoped; Pi's context runner does not write it back to the session.
 
 Direction is strictly input → processing → output. Core modules are pure functions
 (no Pi imports, no global state); the only side effect in the pipeline is `load.ts`
@@ -137,6 +145,29 @@ buildTransform(originalText: string, existingImages: ImageContent[], converted: 
 
 Single responsibility: assemble the final text/images payload. No file I/O, no scanning.
 
+### tool-image-relay.ts
+
+```ts
+interface ImageModelDescriptor {
+  id: string;
+  api: string;
+  input: readonly string[];
+}
+
+// True only for Gemini IDs that declare image input support.
+isGeminiImageModel(model?: ImageModelDescriptor): boolean
+
+// True only for the D14 Responses API allowlist.
+shouldRelayToolResultImages(model?: ImageModelDescriptor): boolean
+
+// Returns a request-scoped copy: tool-result text/IDs remain in place and images are
+// appended once in a temporary user attachment message after each consecutive batch.
+relayToolResultImages<T>(messages: readonly T[]): Array<T | RelayedUserMessage>
+```
+
+Single responsibility: adapt tool-result image placement for a known provider boundary.
+It does not read files, encode Base64, send messages, or mutate the session.
+
 ### wasm/ (Worker & Engine)
 
 ```ts
@@ -168,6 +199,7 @@ Single responsibility: lazy worker lifecycle management, 30s idle auto-reclaim, 
 | Encoding/size strategy (e.g. add downscaling) | `load.ts` only | New loader, same `ok/err` union |
 | Placeholder wording / merge policy | `build.ts` only | New builder, same `TransformResult` |
 | Pi host API (e.g. RPC transport) | `index.ts` only | New adapter, same gate + pipeline calls |
+| Responses tool-image placement | `tool-image-relay.ts` only | Replace the request-view policy, same serializable message output |
 
 ## Defensive notes
 
@@ -179,6 +211,9 @@ Single responsibility: lazy worker lifecycle management, 30s idle auto-reclaim, 
   `index.ts` returns `{ action: "continue" }` and the message is untouched (D1–D2).
   When a non-Gemini model encounters self-contained tokens, Track B restores them to
   local file paths without Base64 attachments (D13). The plugin never alters non-target traffic.
+- **Context relay is request-scoped**: D14 operates on Pi's cloned context messages and
+  returns a new view. It never appends a session entry, calls `sendUserMessage`, or causes
+  an additional model turn. Unknown APIs and models without image input support fail open.
 - **Merge semantics**: Pi's extension runner replaces `images` when transform
   returns the field (`result.images ?? currentImages`), so `build.ts` must re-include
   `event.images` explicitly (D7). Dropping them would silently detach user images.
@@ -187,6 +222,7 @@ Single responsibility: lazy worker lifecycle management, 30s idle auto-reclaim, 
 
 - Tests (`test/`, node:test) cover matching boundaries, existing-attachment budget reservation,
   validation, all adaptive tiers, Worker replacement isolation, npm `node_modules` startup,
-  numbering, merge, and placeholder replacement with zero Pi involvement.
+  numbering, merge, placeholder replacement, and D14 tool-image relay ordering/idempotence
+  with zero Pi involvement.
 - `src/index.ts` (composition root) is kept thin on purpose; it is exercised by the
   interactive verification in [README.md](../../README.md) rather than unit tests.

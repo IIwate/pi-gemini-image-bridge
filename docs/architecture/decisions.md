@@ -6,12 +6,14 @@ the settled answer and the trade-off it resolves. Product background and usage l
 
 ## D1 — Model gate
 
-**Settled**: only `ctx.model.id.startsWith("gemini")` triggers the pipeline; provider is
-not checked.
+**Settled**: the clipboard attachment track is eligible only when
+`ctx.model.id.startsWith("gemini")` and `ctx.model.input.includes("image")`.
+The tool-image relay has the additional Responses API gate defined by D14.
 
-**Why**: the read-tool image loss is a Gemini-upstream limitation (functionResponse
-cannot carry images), independent of which proxy serves the model. Restricting by id
-keeps the gate narrow and predictable.
+**Why**: image attachments are invalid for a model that does not declare image input
+support. Metadata failures fail open, preserving the existing text-only behavior.
+The provider/API distinction belongs to the relay-specific decision rather than the
+general clipboard path.
 
 ## D2 — Source gate
 
@@ -118,6 +120,33 @@ this file; CONTEXT.md is vocabulary-only.
 3. **Expired Files**: if the temp file was evicted by OS cleanup, safely emits `[image omitted: clipboard temp file expired or missing from disk]`.
 
 **Why**: memory caches are lost upon Pi process restarts or cross-session `/resume` commands, turning anonymous `[Image #1]` into dead strings. Embedding filenames creates an entirely stateless, durable contract that survives restarts, crosses sessions, seamlessly accommodates model switching, and protects external model API boundaries.
+
+## D14 — Responses Tool-Image Relay
+
+**Settled**: before a request is sent, the `context` handler creates a transient view for
+Gemini models that declare `input` support for images and use a known Responses API:
+`openai-responses`, `openai-codex-responses`, or
+`cliproxyapi-codex-responses`. It scans each consecutive batch of `toolResult` messages,
+extracts every `ImageContent` regardless of the tool name, and removes those image blocks
+from the corresponding tool results while retaining their text, `toolCallId`, tool name,
+error flag, and other metadata. After the batch it appends one temporary `user` message
+containing a text marker and all extracted images in their original order. Image-only tool
+results receive `(see attached image)` so the Responses function output remains valid.
+
+The original session messages are never changed. The handler does not call
+`sendUserMessage`, add a visible message, or trigger another model turn; applying it twice
+produces the same view and never duplicates Base64 payloads.
+
+**Why**: Pi already creates image blocks for `read` and other image-producing tools, and
+its native Google converter has a supported path for those blocks. The affected
+CLIProxyAPI Responses translation can lose images nested in `function_call_output`, while
+top-level user `input_image` parts survive. Reusing the proven user-attachment channel
+fixes that proxy boundary without coupling the extension to CLIProxyAPI's internal JSON.
+OpenAI Completions and native Google Gemini traffic are outside this relay gate.
+
+**Trade-off**: the relay is intentionally allowlisted to known Responses API identifiers.
+An unrecognized proxy API, a non-Gemini model, or a model without image input support is
+left untouched until it is explicitly verified.
 
 
 

@@ -1,11 +1,10 @@
 /**
- * index.ts — Composition root: converts pasted clipboard images into user-message
- * attachments for Gemini-family models via a 4-tier adaptive pipeline with lazy worker,
- * stateless self-contained placeholders, and model-aware dual-track routing (D13).
+ * index.ts - Composition root: routes clipboard and Responses tool-result images
+ * through user-message attachments for Gemini-family models.
  *
- * Why: CPA's gemini translator drops images inside functionResponse (read-tool
- * results), but translates user-message `input_image` parts correctly. Turning the
- * pasted image path into an attachment sends it through the working channel.
+ * Why: CPA translates user-message `input_image` parts correctly but can drop images
+ * nested in Responses `function_call_output` items. Clipboard paths are attached at
+ * input time, while tool-result images are relayed through a transient context view.
  *
  * For non-Gemini models (Claude/GPT), self-contained placeholders in rewound text are
  * seamlessly restored to local file paths without large Base64 attachments (protecting
@@ -34,14 +33,25 @@ import {
   extractFilename,
   type SelfContainedPlaceholderMatch,
 } from "./core/scan.ts";
+import {
+  isGeminiImageModel,
+  relayToolResultImages,
+  shouldRelayToolResultImages,
+} from "./core/tool-image-relay.ts";
 
 export default function (pi: ExtensionAPI) {
+  pi.on("context", (event, ctx) => {
+    if (!shouldRelayToolResultImages(ctx.model)) return;
+    return { messages: relayToolResultImages(event.messages) };
+  });
+
   pi.on("input", async (event, ctx) => {
     // Only intercept interactive user input (decisions.md D2)
     if (event.source !== "interactive") return { action: "continue" };
 
     const dropDir = tmpdir();
     const isGemini = ctx.model?.id?.startsWith("gemini") ?? false;
+    const supportsGeminiImages = isGeminiImageModel(ctx.model);
     const rawPaths = scanClipboardImagePaths(event.text, dropDir);
     const placeholders = scanSelfContainedPlaceholders(event.text);
 
@@ -68,8 +78,11 @@ export default function (pi: ExtensionAPI) {
       return { action: "transform", text, images: event.images ?? [] };
     }
 
+    // Fail open when model metadata does not declare image input support (D1).
+    if (!supportsGeminiImages) return { action: "continue" };
+
     // -------------------------------------------------------------------------
-    // Track A: Gemini Models (4-Tier 100MB Adaptive Pipeline)
+    // Track A: Gemini Models (4-Tier adaptive pipeline with a 50MB shared budget)
     // -------------------------------------------------------------------------
     interface TargetItem {
       token: string;

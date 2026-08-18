@@ -199,7 +199,7 @@ Single responsibility: lazy worker lifecycle management, 30s idle auto-reclaim, 
 | Encoding/size strategy (e.g. add downscaling) | `load.ts` only | New loader, same `ok/err` union |
 | Placeholder wording / merge policy | `build.ts` only | New builder, same `TransformResult` |
 | Pi host API (e.g. RPC transport) | `index.ts` only | New adapter, same gate + pipeline calls |
-| Responses tool-image placement | `tool-image-relay.ts` only | Replace the request-view policy, same serializable message output |
+| Responses tool image placement | `tool-image-relay.ts` only | Replace the request-view policy, same serializable message output |
 
 ## Defensive notes
 
@@ -222,7 +222,7 @@ Single responsibility: lazy worker lifecycle management, 30s idle auto-reclaim, 
 
 - Tests (`test/`, node:test) cover matching boundaries, existing-attachment budget reservation,
   validation, all adaptive tiers, Worker replacement isolation, npm `node_modules` startup,
-  numbering, merge, placeholder replacement, and D14 tool-image relay ordering/idempotence
+  numbering, merge, placeholder replacement, and D14 tool image relay ordering/idempotence
   with zero Pi involvement.
 - `src/index.ts` (composition root) is kept thin on purpose; it is exercised by the
   interactive verification in [README.md](../../README.md) rather than unit tests.

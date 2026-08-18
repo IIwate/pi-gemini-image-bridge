@@ -1,8 +1,8 @@
-# Pi Gemini Image Paste
+# Pi Gemini Image Bridge
 
-A Pi extension that converts pasted clipboard images into message attachments for
-Gemini-family models and relays tool-result images through the user-attachment channel
-when a Responses proxy drops nested image blocks.
+A Pi extension that bridges image-bearing context into the user-attachment channel for
+Gemini-family models when a Responses proxy drops nested image blocks. Its routes include
+clipboard attachments, tool image relay, and stateless placeholder rehydration.
 
 ## Language
 
@@ -11,21 +11,26 @@ Models whose ID starts with `gemini` and whose `input` metadata includes `image`
 (e.g. `gemini-3.7-flash-high`, `gemini-pro-agent`).
 _Avoid_: models without declared image input support (when referring specifically to the plugin's target gate)
 
-**Responses Tool-Image Gap**:
+**Image Bridge**:
+The umbrella capability that routes image data from clipboard drops, history tokens, and
+tool results into the user-attachment channel accepted by the target Gemini Responses path.
+It is a transport boundary, not a new visible user message or model turn.
+_Avoid_: image paste, image relay (when referring to the whole system)
+
+**Responses Tool Image Gap**:
 The Pi `toolResult` image block → Responses `function_call_output` → Gemini proxy path,
 where a proxy such as CLIProxyAPI can drop nested image blocks during translation.
 Pi has already produced the image; the gap is at the proxy boundary. Native Google
 conversion and verified OpenAI Completions paths are outside this term.
 _Avoid_: read tool failure, Pi image loss (when distinguishing the proxy translation gap)
 
-**Image Passthrough**:
-The plugin's core mechanism: converting a pasted clipboard image file path found in
-interactive input text into an image attachment on the user message, so the image
-travels via the user-message channel (which Responses proxies translate correctly to
-`input_image`/`inline_data`).
-_Avoid_: bypass, workaround (when naming the feature)
+**Clipboard Attachment**:
+The Image Bridge route that converts a Pi clipboard drop path found in interactive input
+into an image attachment on the user message, so the image travels via the user-message
+channel (which Responses proxies translate correctly to `input_image`/`inline_data`).
+_Avoid_: image paste, image passthrough, bypass, workaround (when naming the feature)
 
-**Tool-Image Relay**:
+**Tool Image Relay**:
 A request-scoped context transformation for allowlisted Responses APIs. It removes
 `ImageContent` blocks from consecutive `toolResult` messages, preserves their text and
 `toolCallId` pairing, then appends one temporary user message containing the images in

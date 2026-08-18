@@ -8,7 +8,7 @@ the settled answer and the trade-off it resolves. Product background and usage l
 
 **Settled**: the clipboard attachment track is eligible only when
 `ctx.model.id.startsWith("gemini")` and `ctx.model.input.includes("image")`.
-The tool-image relay has the additional Responses API gate defined by D14.
+The tool image relay has the additional Responses API gate defined by D14.
 
 **Why**: image attachments are invalid for a model that does not declare image input
 support. Metadata failures fail open, preserving the existing text-only behavior.
@@ -121,7 +121,7 @@ this file; CONTEXT.md is vocabulary-only.
 
 **Why**: memory caches are lost upon Pi process restarts or cross-session `/resume` commands, turning anonymous `[Image #1]` into dead strings. Embedding filenames creates an entirely stateless, durable contract that survives restarts, crosses sessions, seamlessly accommodates model switching, and protects external model API boundaries.
 
-## D14 — Responses Tool-Image Relay
+## D14 — Responses Tool Image Relay
 
 **Settled**: before a request is sent, the `context` handler creates a transient view for
 Gemini models that declare `input` support for images and use a known Responses API:

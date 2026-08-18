@@ -1,7 +1,7 @@
 {
-  "name": "pi-gemini-image-paste",
-  "version": "0.4.0",
-  "description": "Pi extension: route pasted clipboard and Responses tool-result images to Gemini-family models as user-message attachments.",
+  "name": "pi-gemini-image-bridge",
+  "version": "0.5.0",
+  "description": "Pi extension: bridge clipboard and tool-result images to Gemini-family user attachments across Responses proxies.",
   "keywords": [
     "pi-package",
     "pi",
@@ -13,12 +13,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/IIwate/pi-gemini-image-paste.git"
+    "url": "git+https://github.com/IIwate/pi-gemini-image-bridge.git"
   },
   "bugs": {
-    "url": "https://github.com/IIwate/pi-gemini-image-paste/issues"
+    "url": "https://github.com/IIwate/pi-gemini-image-bridge/issues"
   },
-  "homepage": "https://github.com/IIwate/pi-gemini-image-paste#readme",
+  "homepage": "https://github.com/IIwate/pi-gemini-image-bridge#readme",
   "type": "module",
   "files": [
     "src/",

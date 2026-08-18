@@ -753,7 +753,7 @@ test("worker replacement keeps a new worker's pending tasks isolated from the ol
 
 test("published JavaScript worker runtime starts from inside node_modules", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-gem-install-test-"));
-  const packageRoot = join(dir, "node_modules", "pi-gemini-image-paste");
+  const packageRoot = join(dir, "node_modules", "pi-gemini-image-bridge");
   const workerRoot = join(packageRoot, "src", "wasm");
   let worker: Worker | null = null;
 

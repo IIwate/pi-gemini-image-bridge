@@ -1,14 +1,14 @@
-# pi-gemini-image-paste
+# Pi Gemini Image Bridge
 
-A lightweight [Pi](https://github.com/badlogic/pi-mono) extension that enables Gemini-family models to receive pasted clipboard and tool-result images through user-message attachments when a Responses proxy drops nested image blocks.
+A lightweight [Pi](https://github.com/badlogic/pi-mono) extension that bridges clipboard and tool-result images into user-message attachments for Gemini-family models when a Responses proxy drops nested image blocks.
 
 ## Why
 
 1. **Pi already produces tool images**: `read`, screenshots, and other tools can return `ImageContent` blocks in `toolResult` messages.
 2. **The Responses proxy can lose them**: CLIProxyAPI's Responses translation may drop images nested inside `function_call_output`, while top-level user `input_image` parts survive. The problem is the proxy translation boundary, not Pi failing to create the image.
-3. **Pi paste input is still a path**: In interactive mode (TUI), pasting an image saves it to `<os.tmpdir()>/pi-clipboard-<uuid>.<ext>` and inserts the raw path text. This extension resolves that path into the same user-attachment channel.
+3. **Pi clipboard input is still a path**: In interactive mode (TUI), pasting an image saves it to `<os.tmpdir()>/pi-clipboard-<uuid>.<ext>` and inserts the raw path text. This extension resolves that path into the same user-attachment channel.
 
-**This plugin** intercepts interactive input, runs an adaptive 4-tier image pipeline, attaches the processed images directly to the user message, and replaces the paths in text with self-contained tokens like `[Image #1: pi-clipboard-<uuid>.png]`. Immediately before an allowlisted Responses request, it also creates a transient context view that moves images from consecutive tool results into one user attachment message without changing session history or adding a model turn.
+**This bridge** handles three image routes: clipboard paths become user attachments through the adaptive 4-tier preparation pipeline; self-contained tokens can be rehydrated across sessions; and, immediately before an allowlisted Responses request, images from consecutive tool results move into one transient user attachment message without changing session history or adding a model turn.
 
 ## 4-Tier Adaptive Image Pipeline
 
@@ -25,7 +25,7 @@ Designed with **Fidelity-First & Zero Hard-Wall Rejection** principles:
 
 ### Via Pi CLI (Recommended)
 ```bash
-pi install npm:pi-gemini-image-paste
+pi install npm:pi-gemini-image-bridge
 ```
 
 ### Via `settings.json`
@@ -34,7 +34,7 @@ Add to the `packages` array in `settings.json` (`~/.pi/agent/settings.json` on L
 ```json
 {
   "packages": [
-    "npm:pi-gemini-image-paste"
+    "npm:pi-gemini-image-bridge"
   ]
 }
 ```
@@ -44,7 +44,7 @@ Add to the `packages` array in `settings.json` (`~/.pi/agent/settings.json` on L
 {
   "packages": [
     {
-      "source": "/path/to/pi-gemini-image-paste",
+      "source": "/path/to/pi-gemini-image-bridge",
       "extensions": ["+src/index.ts"]
     }
   ]

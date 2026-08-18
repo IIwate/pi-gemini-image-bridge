@@ -1,45 +1,32 @@
 # Pi Gemini Image Bridge
 
-A lightweight [Pi](https://github.com/badlogic/pi-mono) extension that bridges clipboard and tool-result images into user-message attachments for Gemini-family models when a Responses proxy drops nested image blocks.
+`v0.5.0` - Pi extension for delivering clipboard and tool-result images to Gemini-family
+models as user-message attachments.
 
-## Why
+## Purpose
 
-1. **Pi already produces tool images**: `read`, screenshots, and other tools can return `ImageContent` blocks in `toolResult` messages.
-2. **The Responses proxy can lose them**: CLIProxyAPI's Responses translation may drop images nested inside `function_call_output`, while top-level user `input_image` parts survive. The problem is the proxy translation boundary, not Pi failing to create the image.
-3. **Pi clipboard input is still a path**: In interactive mode (TUI), pasting an image saves it to `<os.tmpdir()>/pi-clipboard-<uuid>.<ext>` and inserts the raw path text. This extension resolves that path into the same user-attachment channel.
+Pi already represents tool output as image blocks, but a Responses proxy can lose images
+nested in tool results. Pi's interactive clipboard flow also inserts a temporary file path
+instead of an attachment. This extension bridges those two input forms.
 
-**This bridge** handles three image routes: clipboard paths become user attachments through the adaptive 4-tier preparation pipeline; self-contained tokens can be rehydrated across sessions; and, immediately before an allowlisted Responses request, images from consecutive tool results move into one transient user attachment message without changing session history or adding a model turn.
+The target setup uses `@router-for-me/pi-cliproxyapi-provider` alongside this extension. The
+CPA provider extension discovers models, registers the `cliproxyapi-codex-responses` API, and
+sends inference through CPA's Codex Responses endpoint. No `models.json` entry is required.
+This project only adapts image placement; it does not register CPA models, credentials, or
+endpoints.
 
-## 4-Tier Adaptive Image Pipeline
+A native `google-generative-ai` configuration through `models.json` is a different Pi
+integration. It bypasses the Responses relay, but it is not the target path documented here.
 
-Designed with **Fidelity-First & Zero Hard-Wall Rejection** principles:
+## Install
 
-| Tier | Trigger | Behavior | Fidelity |
-|---|---|---|---|
-| **Tier 1: Validated Passthrough** | Within available request budget | Lightweight image-structure validation followed by direct Base64 encoding without loading WASM | **Original Bytes Preserved** |
-| **Tier 2: Lossless Optimization** | PNG exceeding budget, ≤ 100MB | Lazy-loads WASM in a background Worker to optimize DEFLATE without changing decoded pixels | **Pixel-Lossless** |
-| **Tier 3: Fidelity-Guarded Downscale** | High-res PNG images (e.g. 8K) exceeding budget | Lanczos3 downscaling via background Worker with 2560px/2048px floors to preserve code OCR legibility, transparently annotated | **High-Fidelity Guarded** |
-| **Tier 4: Hard Safety Floor** | Hard-limit, request-budget, timeout, expired, or unreadable failures | Replaced with a reason-specific omission placeholder | **Safe & Honest** |
-
-## Installation
-
-### Via Pi CLI (Recommended)
 ```bash
+pi install npm:@router-for-me/pi-cliproxyapi-provider
 pi install npm:pi-gemini-image-bridge
 ```
 
-### Via `settings.json`
-Add to the `packages` array in `settings.json` (`~/.pi/agent/settings.json` on Linux/macOS/WSL, `%USERPROFILE%\.pi\agent\settings.json` on Windows):
+For a local checkout, add the package to Pi's `settings.json`:
 
-```json
-{
-  "packages": [
-    "npm:pi-gemini-image-bridge"
-  ]
-}
-```
-
-### From Local Source (Development)
 ```json
 {
   "packages": [
@@ -51,62 +38,88 @@ Add to the `packages` array in `settings.json` (`~/.pi/agent/settings.json` on L
 }
 ```
 
-Restart Pi after configuring.
+Requires Pi `>= 0.84.1`, Node.js `>= 23.6.0`, and a configured CPA provider extension.
+Use `/login CLIProxyAPI` (or `/login cliproxyapi`) in Pi to configure the CPA connection.
 
-## Usage
+## Behavior
 
-In interactive mode with a Gemini-family model whose metadata declares image input support (for example `gemini-3.7-flash-high`):
+### Clipboard images
 
-- **Paste image**: Press `Ctrl+V` (Linux/macOS/WSL) or `Alt+V` (Windows). Pi drops the image and pastes the path. Send the message.
-- **Or type path**: Enter `<os.tmpdir()>/pi-clipboard-<uuid>.png` directly in your prompt.
+In interactive mode, paste with `Ctrl+V` on Linux/macOS/WSL or `Alt+V` on Windows, then
+send the message. A Pi clipboard path such as
+`<os.tmpdir()>/pi-clipboard-<uuid>.png` becomes a filename-bearing label and an image
+attachment.
 
-The path is replaced with `[Image #1: pi-clipboard-<uuid>.png]` (or `[Image #1: pi-clipboard-<uuid>.png (auto-scaled to 2560px to fit Gemini 100MB limit)]`), and the image is attached directly to the user message. Raw clipboard paths remain untouched for non-Gemini models, and all non-interactive runs (`pi -p`, RPC) pass through unchanged.
+Only complete Pi clipboard-drop paths with `png`, `jpg`, `jpeg`, `webp`, or `gif` are matched.
+Non-interactive input (`pi -p`, RPC) passes through unchanged.
 
-When switching to a non-Gemini model (Claude / GPT), any self-contained tokens in rewound prompt history are automatically restored to their physical temp file paths without Base64 payload inflation, protecting non-Gemini API payload limits.
+### Responses tool images
 
-For `cliproxyapi-codex-responses` (and the explicitly supported OpenAI Responses APIs), images returned by `read` or any other tool are relayed from consecutive `toolResult` messages into one temporary user attachment message. Tool text, tool names, error state, and `toolCallId` pairing remain in the request. Native Google Gemini and OpenAI Completions traffic is not modified by this relay.
+The primary target is `cliproxyapi-codex-responses`. The relay is also enabled for these
+explicitly allowlisted Responses APIs:
 
-## Verification
+- `openai-responses`
+- `openai-codex-responses`
+- `cliproxyapi-codex-responses`
 
-### Automated Tests
-Run the self-contained test suite (matching, budgets, adaptive loading, Worker replacement, npm installation layout, single-pass build, and stateless rehydration):
+Images from consecutive `toolResult` messages are moved, in order, into one transient user
+attachment message. Tool text, names, IDs, and error state remain intact. The session history
+and model turn count are unchanged.
+
+### Rewind and model switching
+
+Labels contain the source filename, so they remain usable after restart, rewind, resume, and
+history recall:
+
+- Gemini models rehydrate the file as an attachment.
+- Non-Gemini models restore the local path without Base64 injection.
+- Missing temporary files become an explicit omission placeholder.
+
+## Image handling
+
+Images share a 50 MB raw-binary request budget, including existing attachments:
+
+1. Files that fit are validated and passed through without re-encoding.
+2. Oversized PNG files up to 100 MB are losslessly optimized in a background Worker.
+3. If needed, PNG files are downscaled with 2560 px / 2048 px fidelity floors.
+4. Hard-limit, budget, timeout, expired, and unreadable cases become reason-specific
+   omission text; the original path is never left in the prompt.
+
+The Worker is lazy, reused for nearby requests, and reclaimed after 30 seconds idle. Codec
+WASM assets are bundled; no runtime npm dependencies are required.
+
+## v0.5.0
+
+- Renamed the package from `pi-gemini-image-paste` to `pi-gemini-image-bridge`.
+- Added stateless filename-bearing labels and model-aware recovery across model switches.
+- Added the allowlisted Responses tool-image relay.
+- Hardened adaptive loading, Worker replacement and timeout handling, npm startup, and
+  Windows/WSL path matching.
+
+Existing users must replace `pi-gemini-image-paste` with `pi-gemini-image-bridge` in Pi
+package settings.
+
+## Verify
 
 ```bash
 npm test
-```
-
-### Typecheck
-Verify TypeScript types without emitting:
-
-```bash
 npm run typecheck
 ```
 
-### Interactive Verification
-1. **Gemini Paste**: In Pi interactive mode with a Gemini model (e.g. `gemini-3.7-flash-high`), paste an image (`Ctrl+V` or `Alt+V`) and send. Verify the path is replaced with `[Image #1: pi-clipboard-<uuid>.<ext>]` and the model responds with accurate visual recognition.
-2. **Responses Tool Image**: With `cliproxyapi/gemini-3.7-flash-high`, ask the model to use `read` on a known image file. Verify the outgoing request retains text-only `function_call_output` items and contains a following user message with `input_text` plus `input_image`; verify the model describes the image accurately.
-3. **Model Switching**: Switch to a non-Gemini model (e.g. `claude-3-5-sonnet`) in the same session. Rewind or edit a message containing `[Image #1: ...]` and submit; verify the token is restored to the physical file path without Base64 attachments.
+For a manual check, paste an image through Gemini, relay a `read` image through an allowlisted
+Responses API, then switch to a non-Gemini model and verify that the label restores to a path.
 
-## Key Boundaries
+## Limits
 
-- **Dual-track targeting**: Interactive Gemini input converts raw paths and rehydrates tokens only when image capability is declared; interactive non-Gemini input only restores self-contained tokens to local paths.
-- **Responses relay gate**: Tool-image relocation requires a Gemini image-capable model and `openai-responses`, `openai-codex-responses`, or `cliproxyapi-codex-responses`. Unknown APIs fail open.
-- **Tool batches**: Parallel/consecutive image-bearing tool results are aggregated in original order into one temporary user attachment message; image-only results retain `(see attached image)` text.
-- **Drop files only**: Matches complete `<os.tmpdir()>/pi-clipboard-<uuid>.{png,jpg,jpeg,webp,gif}` paths across both `/` and `\` separators.
-- **Request protection**: Existing image attachments and newly converted images share the same 50MB raw-binary budget.
-- **Fidelity policy**: The extension keeps its adaptive 50MB/high-fidelity loader and does not replace it with Pi's default approximately 4.5MB/2000px tool-image compression policy, avoiding screenshot clarity regressions.
-- **Zero runtime dependencies**: Self-contained in-process WASM assets (~200KB) with zero external npm dependencies.
+- Clipboard conversion only applies to interactive Gemini input with declared image support.
+- The Responses relay is allowlisted and does not modify native Google Gemini or OpenAI
+  Completions traffic.
+- Adaptive optimization and downscaling apply to PNG; other formats must fit the remaining
+  budget.
+- Rehydration requires the clipboard temporary file to still exist.
 
-## Known Limits
-
-- Lossless optimization and downscaling are available only for PNG files. Other formats must already fit the remaining request budget.
-- Tier 1 performs lightweight structural validation, not a complete decode. Deep corruption in an otherwise well-formed JPEG, WebP, or GIF may still be rejected upstream.
-- Rehydration depends on the clipboard drop file still existing in the platform temp directory.
-- The relay only addresses the allowlisted Responses translation gap. It does not alter native Google Gemini or OpenAI Completions behavior, and a proxy with a different API identifier must be verified before adding to the allowlist.
-
-## Architecture
-
-See [docs/architecture/index.md](docs/architecture/index.md) (S.U.P.E.R. modular monolith) and [docs/architecture/decisions.md](docs/architecture/decisions.md) (architecture decisions D1–D14).
+See [architecture/index.md](docs/architecture/index.md) for module contracts and data flow,
+and [architecture/decisions.md](docs/architecture/decisions.md) for product decisions.
 
 ## License
 

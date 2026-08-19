@@ -5,27 +5,19 @@ This file is the repository-level execution guide and the single source of truth
 ## Read before changing code
 
 - Before changing `src/`, read the [architecture map](docs/architecture/index.md) and the target module's source; the pipeline is small, so reading the two adjacent modules is sufficient context.
-- Before changing product behavior (matching rules, size limit, placeholder text), read [architecture decisions](docs/architecture/decisions.md) (D1–D15). Decision changes and implementation must move together.
+- Before changing product behavior (relay gate, relay ordering, scope), read [architecture decisions](docs/architecture/decisions.md) (D14, D16). Decision changes and implementation must move together.
 - Before touching user-facing docs, read [README.md](README.md) — it owns background, usage, verification, and known limits.
 - Read the defensive notes in [architecture map](docs/architecture/index.md) before lifecycle, event-loop, or Pi host interaction work.
 
 ## Repository map
 
 ```text
-src/index.ts       Composition root: registers pi.on("input"), wires the pipeline
-src/core/          Pure logic, zero Pi/Node-host coupling beyond fs/path
-  scan.ts          Matches clipboard-image paths in input text
-  budget.ts        Allocates the shared request-level image budget
-  load.ts          Reads a file into base64 + mimeType with the size limit
-  build.ts         Assembles the transform payload (text + images)
-src/wasm/          Node worker and self-contained WASM image runtime
-  pool.ts          Worker lifecycle and task isolation
-  protocol.ts      Serializable worker request/response contract
-  worker.js        node_modules-safe worker entry point
-  engine.js        WASM codec adapter used by the worker and tests
-test/              node:test unit tests for core modules
+src/index.ts       Composition root: registers the request-scoped pi.on("context") relay
+src/core/          Pure logic, zero Pi coupling
+  tool-image-relay.ts  Moves toolResult images into a transient user attachment view
+test/              node:test unit tests for the relay contract
 docs/architecture/ System map, data flow, and module contracts
-  decisions.md    Confirmed product decisions (D1–D13)
+  decisions.md    Confirmed product decisions (D8, D14, D16; D1–D13/D15 retracted)
 README.md         Background, usage, verification, known limits
 CONTEXT.md        Domain vocabulary only; carries no architecture rationale
 ```
@@ -35,7 +27,7 @@ Each core module has a single job, a serializable contract, and no reverse depen
 ## Documentation ownership
 
 - `README.md` owns background, usage, verification steps, and known limits.
-- `docs/architecture/decisions.md` owns confirmed product decisions (D1–D15).
+- `docs/architecture/decisions.md` owns confirmed product decisions (active: D8, D14, D16).
 - `docs/architecture/index.md` owns the system map, data-flow direction, and module contracts.
 - `CONTEXT.md` owns domain vocabulary only; it does not own architecture rationale.
 - `AGENTS.md` owns workflow, routing, and repository-wide engineering rules.
@@ -45,9 +37,9 @@ Keep one authoritative home for each fact. Other documents link to that authorit
 
 ## Defensive change entry points
 
-- Input transform behavior (matching, merging `event.images`, placeholder numbering): read `src/core/build.ts` contract and [decisions.md](docs/architecture/decisions.md) D3–D15.
-- Pi host interaction (event registration, `ctx.model`, `ctx.ui`): read `src/index.ts`; keep host knowledge out of `src/core/`.
-- Size-limit or failure handling: read `src/core/load.ts`; the failure contract is "replace with placeholder text, never leave the original path".
+- Relay behavior (gate, batching, image-only placeholder text): read `src/core/tool-image-relay.ts` contract and [decisions.md](docs/architecture/decisions.md) D14 & D16.
+- Pi host interaction (event registration, `ctx.model`): read `src/index.ts`; keep host knowledge out of `src/core/`.
+- The extension must not grow an input handler again; input rewriting is retracted by D16.
 
 # S.U.P.E.R Architecture Philosophy
 

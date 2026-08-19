@@ -1,179 +1,20 @@
 /**
- * index.ts - Composition root: routes clipboard and Responses tool-result images
- * through user-message attachments for Gemini-family models.
+ * index.ts - Composition root: relays Responses tool-result images into the
+ * user-attachment channel for Gemini-family models.
  *
- * Why: CPA translates user-message `input_image` parts correctly but can drop images
- * nested in Responses `function_call_output` items. Clipboard paths are attached at
- * input time, while tool-result images are relayed through a transient context view.
- *
- * For non-Gemini models (Claude/GPT), self-contained placeholders in rewound text are
- * seamlessly restored to local file paths without large Base64 attachments (protecting
- * Claude's strict 5MB API limit).
+ * Why: Pi's `read` tool already produces native image toolResults, but a Responses
+ * proxy such as CLIProxyAPI can drop images nested in `function_call_output` items
+ * while translating top-level user `input_image` parts correctly. The relay runs on
+ * the request-scoped `context` event, so session storage, UI, rewind, and model
+ * switching stay fully Pi-native (decisions.md D14 & D16).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { existsSync } from "node:fs";
-import {
-  DEFAULT_MAX_REQUEST_BYTES,
-  base64DecodedByteLength,
-  createBudgetPool,
-} from "./core/budget.ts";
-import {
-  buildTransform,
-  placeholderTextFor,
-  EXPIRED_PLACEHOLDER,
-  type ConvertedItem,
-} from "./core/build.ts";
-import { loadImageAdaptive } from "./core/load.ts";
-import {
-  scanClipboardImagePaths,
-  scanSelfContainedPlaceholders,
-  extractFilename,
-  type SelfContainedPlaceholderMatch,
-} from "./core/scan.ts";
-import {
-  isGeminiImageModel,
-  relayToolResultImages,
-  shouldRelayToolResultImages,
-} from "./core/tool-image-relay.ts";
-import { compactImageLabelsForDisplay } from "./core/display.ts";
+import { relayToolResultImages, shouldRelayToolResultImages } from "./core/tool-image-relay.ts";
 
 export default function (pi: ExtensionAPI) {
-  // Keep filename-bearing tokens in session/model text, but avoid wrapping long
-  // temporary filenames in the interactive transcript.
-  pi.registerMarkdownTransformer((markdown, context) => {
-    if (context.messageType !== "user") return markdown;
-    return compactImageLabelsForDisplay(markdown);
-  });
-
   pi.on("context", (event, ctx) => {
     if (!shouldRelayToolResultImages(ctx.model)) return;
     return { messages: relayToolResultImages(event.messages) };
-  });
-
-  pi.on("input", async (event, ctx) => {
-    // Only intercept interactive user input (decisions.md D2)
-    if (event.source !== "interactive") return { action: "continue" };
-
-    const dropDir = tmpdir();
-    const isGemini = ctx.model?.id?.startsWith("gemini") ?? false;
-    const supportsGeminiImages = isGeminiImageModel(ctx.model);
-    const rawPaths = scanClipboardImagePaths(event.text, dropDir);
-    const placeholders = scanSelfContainedPlaceholders(event.text);
-
-    // If text contains neither raw paths nor self-contained placeholders, pass through
-    if (rawPaths.length === 0 && placeholders.length === 0) {
-      return { action: "continue" };
-    }
-
-    // -------------------------------------------------------------------------
-    // Track B: Non-Gemini Models (Claude / GPT / Local Models)
-    // -------------------------------------------------------------------------
-    // Restore self-contained placeholders back to local file paths so non-Gemini
-    // models can use their native read-tool. Zero Base64 attachments are injected,
-    // strictly protecting Claude's 5MB API limit.
-    if (!isGemini) {
-      if (placeholders.length === 0) return { action: "continue" };
-
-      let text = event.text;
-      for (const ph of placeholders) {
-        const physicalPath = join(dropDir, ph.filename);
-        const replacement = existsSync(physicalPath) ? physicalPath : EXPIRED_PLACEHOLDER;
-        text = text.replaceAll(ph.token, replacement);
-      }
-      return { action: "transform", text, images: event.images ?? [] };
-    }
-
-    // Fail open when model metadata does not declare image input support (D1).
-    if (!supportsGeminiImages) return { action: "continue" };
-
-    // -------------------------------------------------------------------------
-    // Track A: Gemini Models (4-Tier adaptive pipeline with a 50MB shared budget)
-    // -------------------------------------------------------------------------
-    interface TargetItem {
-      token: string;
-      filename: string;
-      resolvedPath: string;
-      index: number;
-    }
-
-    const targets: TargetItem[] = [];
-
-    for (const p of rawPaths) {
-      const idx = event.text.indexOf(p);
-      if (idx !== -1) {
-        targets.push({
-          token: p,
-          filename: extractFilename(p),
-          resolvedPath: p,
-          index: idx,
-        });
-      }
-    }
-
-    for (const ph of placeholders) {
-      const idx = event.text.indexOf(ph.token);
-      if (idx !== -1) {
-        targets.push({
-          token: ph.token,
-          filename: ph.filename,
-          resolvedPath: join(dropDir, ph.filename),
-          index: idx,
-        });
-      }
-    }
-
-    targets.sort((a, b) => a.index - b.index);
-
-    // Existing attachments and converted images share one request-level ceiling (D5 & D11)
-    const existingImages = event.images ?? [];
-    const reservedBytes = existingImages.reduce(
-      (total, image) => total + base64DecodedByteLength(image.data),
-      0,
-    );
-    const budgetPool = createBudgetPool(DEFAULT_MAX_REQUEST_BYTES, reservedBytes);
-    const converted: ConvertedItem[] = [];
-    let imageIndex = 0;
-
-    for (const target of targets) {
-      if (!existsSync(target.resolvedPath)) {
-        converted.push({
-          target: target.token,
-          label: "",
-          image: null,
-          placeholder: placeholderTextFor("expired"),
-        });
-        continue;
-      }
-
-      const result = await loadImageAdaptive(target.resolvedPath, budgetPool);
-
-      if (result.ok) {
-        imageIndex++;
-        const annotationSuffix = result.annotation ? ` ${result.annotation}` : "";
-        // Self-contained label embeds the filename for stateless cross-session recovery
-        const label = `[Image #${imageIndex}: ${target.filename}${annotationSuffix}]`;
-
-        converted.push({
-          target: target.token,
-          label,
-          image: { type: "image", mimeType: result.image.mimeType, data: result.image.data },
-          placeholder: "",
-        });
-      } else {
-        converted.push({
-          target: target.token,
-          label: "",
-          image: null,
-          placeholder: placeholderTextFor(result.reason),
-        });
-      }
-    }
-
-    const built = buildTransform(event.text, existingImages, converted);
-    if (!built) return { action: "continue" };
-    return { action: "transform", text: built.text, images: built.images };
   });
 }

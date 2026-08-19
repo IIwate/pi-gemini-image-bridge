@@ -1,8 +1,7 @@
 # Pi Gemini Image Bridge
 
-A Pi extension that bridges image-bearing context into the user-attachment channel for
-Gemini-family models when a Responses proxy drops nested image blocks. Its routes include
-clipboard attachments, tool image relay, and stateless placeholder rehydration.
+A Pi extension that relays tool-result images into the user-attachment channel for
+Gemini-family models when a Responses proxy drops nested image blocks.
 
 ## Language
 
@@ -12,9 +11,9 @@ Models whose ID starts with `gemini` and whose `input` metadata includes `image`
 _Avoid_: models without declared image input support (when referring specifically to the plugin's target gate)
 
 **Image Bridge**:
-The umbrella capability that routes image data from clipboard drops, history tokens, and
-tool results into the user-attachment channel accepted by the target Gemini Responses path.
-It is a transport boundary, not a new visible user message or model turn.
+The transport capability that moves tool-result images into the user-message channel
+accepted by the target Gemini Responses path. It is a transport boundary, not a new
+visible user message or model turn.
 _Avoid_: image paste, image relay (when referring to the whole system)
 
 **Responses Tool Image Gap**:
@@ -24,12 +23,6 @@ Pi has already produced the image; the gap is at the proxy boundary. Native Goog
 conversion and verified OpenAI Completions paths are outside this term.
 _Avoid_: read tool failure, Pi image loss (when distinguishing the proxy translation gap)
 
-**Clipboard Attachment**:
-The Image Bridge route that converts a Pi clipboard drop path found in interactive input
-into an image attachment on the user message, so the image travels via the user-message
-channel (which Responses proxies translate correctly to `input_image`/`inline_data`).
-_Avoid_: image paste, image passthrough, bypass, workaround (when naming the feature)
-
 **Tool Image Relay**:
 A request-scoped context transformation for allowlisted Responses APIs. It removes
 `ImageContent` blocks from consecutive `toolResult` messages, preserves their text and
@@ -37,48 +30,3 @@ A request-scoped context transformation for allowlisted Responses APIs. It remov
 order. It applies to every image-producing tool, not only `read`, and never changes the
 stored session.
 _Avoid_: sendUserMessage, synthetic user turn (the relay is not a visible message or extra turn)
-
-**Clipboard Drop File**:
-A pasted clipboard image saved to disk by Pi's `handleClipboardPaste`, matching
-`<os.tmpdir()>/pi-clipboard-<uuid>.<ext>`. The only image path pattern the plugin converts.
-_Avoid_: temp image, screenshot file, clipboard image (when the exact path pattern matters)
-
-**Self-Contained Placeholder Token**:
-A stateless label format (e.g. `[Image #1: pi-clipboard-<uuid>.png]`) that embeds the original
-clipboard image filename directly into the prompt text, with optional transparent annotation
-(e.g. `[Image #1: pi-clipboard-<uuid>.png (auto-scaled to 2560px to fit Gemini 100MB limit)]`).
-Enables cross-session history recall, restarts, and non-Gemini path restoration without resident
-in-memory state.
-_Avoid_: anonymous label, opaque placeholder, tag, replacement text (when referring to filename-bearing tokens)
-
-**Tiered Adaptive Pipeline**:
-The 4-tier progressive degradation ladder for processing clipboard images:
-1. Tier 1 (Validated Passthrough): Lightweight structure validation and original-byte passthrough for files within the remaining request budget;
-2. Tier 2 (Lossless Optimization): WASM PNG re-encoding that preserves decoded pixels without preserving file metadata or byte identity;
-3. Tier 3 (Fidelity-Guarded Resampling): Lanczos3 downscaling with hard floors at 2560px/2048px to preserve code OCR clarity;
-4. Tier 4 (Hard Safety Floor): Reason-specific placeholder omission for hard-limit, request-budget, timeout, expired, and unreadable failures.
-_Avoid_: compression pipeline, image resizing (when referring to the 4-tier decision ladder)
-
-**Dynamic Greedy Budget Pool**:
-The total request-level binary budget (~50MB raw binary, ~66.7MB Base64) derived from the 100MB
-Gemini API limit minus context safety margins. Existing attachments reserve their decoded byte
-length first; newly converted images consume the remainder greedily in order of appearance.
-_Avoid_: static budget, image size limit (when referring to the multi-image shared pool)
-
-**Worker Thread Pipeline**:
-The dedicated background execution channel powered by Node.js `worker_threads`. Offloads
-CPU-intensive WASM compilation, Lanczos3 resampling, and PNG encoding to a background
-thread so the main TUI event loop never freezes.
-_Avoid_: async execution, background thread (when referring to the dedicated Node.js Worker pool)
-
-**Lazy Spawn & 30s Idle Auto-Reclaim**:
-The on-demand worker lifecycle pattern (Piscina standard). The worker thread is only spawned
-when a Tier 2/3 task arrives, kept warm for consecutive requests, and automatically terminated
-after 30 seconds of inactivity to reclaim all memory.
-_Avoid_: eager worker, permanent daemon (when describing thread lifecycle management)
-
-**Stateless Placeholder Rehydration**:
-The reverse-resolution process where self-contained tokens in rewound, resumed, or
-cross-session draft text extract their embedded filenames, reconstruct physical temp paths,
-and reload attachments for Gemini or restore raw paths for non-Gemini models.
-_Avoid_: cache lookup, memory recovery (when referring to stateless token rehydration)

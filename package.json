@@ -1,7 +1,7 @@
 {
   "name": "pi-gemini-image-bridge",
-  "version": "0.5.2",
-  "description": "Pi extension: bridge clipboard and tool-result images to Gemini-family user attachments across Responses proxies.",
+  "version": "0.6.0",
+  "description": "Pi extension: relay tool-result images to Gemini-family user attachments across Responses proxies.",
   "keywords": [
     "pi-package",
     "pi",
